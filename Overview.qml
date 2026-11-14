@@ -26,6 +26,7 @@ Item {
   property var manifest: null
 
   property bool opened: false
+  property double openedAt: 0
   // board / toplevelByAddress are swapped together: the delegates index the
   // map by the address the board carries.
   property var board: []
@@ -38,6 +39,14 @@ Item {
   function unregisterPreview(item) { root.previews = root.previews.filter(function(p) { return p !== item }) }
   function thumbnailItems() {
     return root.previews.filter(function(p) { return !!p }).map(function(p) { return p.navigationInfo() })
+  }
+  IpcHandler {
+    target: "omaspaces-overview-debug"
+    function status(): string {
+      return JSON.stringify({opened: root.opened, selectedAddress: root.selectedAddress,
+        surfaces: root.surfaceStates(),
+        captures: root.previews.filter(function(p) { return !!p }).map(function(p) { return p.captureState() })})
+    }
   }
   property int settleTicks: 0
   // Held between dismiss() and the dispatch that follows it; see activate().
@@ -100,6 +109,41 @@ Item {
     }
   }
 
+  function surfaceStates() {
+    var result = []
+    for (var i = 0; i < overviewPanels.count; i++) {
+      var host = overviewPanels.objectAt(i)
+      if (host) result.push({screen: host.modelData.name, retries: host.retries,
+        recycling: host.recycling, alpha: host.lastAlpha, exhausted: host.retries >= 4 && host.lastAlpha < 0.9})
+    }
+    return result
+  }
+
+  // A captured frame does not prove that its output surface was presented.
+  // Read compositor mapping/opacity independently before retrying an output.
+  Process {
+    id: surfaceProbe
+    command: ["hyprctl", "layers", "-j"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        if (!root.opened) return
+        var layers
+        try { layers = JSON.parse(text) } catch (e) { return }
+        for (var i = 0; i < overviewPanels.count; i++) {
+          var host = overviewPanels.objectAt(i)
+          if (host) host.checkSurface(layers[host.modelData.name])
+        }
+      }
+    }
+  }
+  Timer {
+    interval: 500
+    running: root.opened
+    repeat: true
+    onTriggered: { if (!surfaceProbe.running) surfaceProbe.running = true }
+  }
+
   function setting(name, fallback) {
     var value = settings[name]
     return value === undefined || value === null ? fallback : value
@@ -112,6 +156,7 @@ Item {
   // The summon contract passes a JSON string; the board takes no payload keys,
   // so the argument is accepted and ignored rather than parsed into nothing.
   function open(payloadJson) {
+    root.openedAt = Date.now()
     root.opened = true
     root.selection = null
     root.selectedAddress = ""
@@ -170,6 +215,19 @@ Item {
     root.toplevelByAddress = byAddress
     root.board = Model.buildBoard(monitors, clients, root.workspaceCount, Model.parseWorkspaceBlocks(workspaceBlocks.text()), true)
     if (!root.validSelection(root.selection)) root.selection = Model.initialSelection(root.board)
+    if (!root.selectedAddress || !byAddress[root.selectedAddress]) {
+      root.selectedAddress = ""
+      var fallback = null
+      for (var mi = 0; mi < root.board.length; mi++) {
+        for (var wi = 0; wi < root.board[mi].workspaces.length; wi++) {
+          var windows = root.board[mi].workspaces[wi].windows
+          for (var ti = 0; ti < windows.length; ti++) {
+            if (!fallback || windows[ti].focusHistoryID < fallback.focusHistoryID) fallback = windows[ti]
+          }
+        }
+      }
+      if (fallback) root.selectedAddress = fallback.address
+    }
     return complete
   }
 
@@ -308,9 +366,56 @@ Item {
   Instantiator {
     id: overviewPanels
     model: Quickshell.screens
-    delegate: PanelWindow {
+    delegate: Item {
+      id: host
+      required property var modelData
+      property bool recycling: false
+      property int retries: 0
+      property int invisibleChecks: 0
+      property real lastAlpha: -1
+      property double lastRetryAt: 0
+      readonly property bool ownsKeyboard: panelLoader.item ? panelLoader.item.ownsKeyboard : false
+      function focusKeys() { if (panelLoader.item) panelLoader.item.focusKeys() }
+      function checkSurface(monitorLayers) {
+        if (!root.opened || recycling) return
+        var alpha = -1
+        var levels = monitorLayers && monitorLayers.levels ? monitorLayers.levels : {}
+        Object.keys(levels).forEach(function(level) {
+          levels[level].forEach(function(surface) {
+            if (surface.namespace === "omarchy-omaspaces" && surface.w > 0 && surface.h > 0)
+              alpha = Math.max(alpha, Number(surface.alpha))
+          })
+        })
+        lastAlpha = alpha
+        if (alpha >= 0.9) { invisibleChecks = 0; return }
+        if (Date.now() - root.openedAt < 1000) return
+        invisibleChecks++
+        if (!Model.retrySurface(alpha, Date.now(), root.openedAt, lastRetryAt, retries, invisibleChecks)) return
+        retries++
+        lastRetryAt = Date.now()
+        invisibleChecks = 0
+        recycling = true
+        remap.restart()
+      }
+      Connections {
+        target: root
+        function onOpenedChanged() {
+          if (!root.opened) { remap.stop(); host.recycling = false }
+          else { host.retries = 0; host.invisibleChecks = 0; host.lastRetryAt = 0; host.lastAlpha = -1 }
+        }
+      }
+      Timer {
+        id: remap
+        interval: 100
+        onTriggered: { if (root.opened) host.recycling = false }
+      }
+      LazyLoader {
+        id: panelLoader
+        active: root.opened && !host.recycling
+        component: Component {
+    PanelWindow {
     id: panel
-    required property var modelData
+    readonly property var modelData: host.modelData
     readonly property int monitorIndex: {
       for (var i = 0; i < root.board.length; i++)
         if (root.board[i].monitor.name === modelData.name) return i
@@ -441,11 +546,11 @@ Item {
       // ---- One section per monitor: a row of workspace tiles, then a row of
       //      slots holding the group columns that hang under those tiles.
       Repeater {
-        model: panel.monitorRow ? [panel.monitorRow] : []
+        model: panel.monitorRow ? 1 : 0
 
         delegate: Column {
           id: section
-          required property var modelData
+          readonly property var modelData: panel.monitorRow
           required property int index
 
           readonly property int monIndex: panel.monitorIndex
@@ -506,12 +611,13 @@ Item {
             spacing: root.tileSpacing
 
             Repeater {
-              model: section.workspaces
+              model: section.workspaces.length
 
               delegate: BorderSurface {
                 id: tile
-                required property var modelData
+                readonly property var modelData: section.workspaces[index]
                 required property int index
+                readonly property var areas: Model.spatialAreas(workspace)
 
                 readonly property var workspace: modelData
                 readonly property bool selected: root.isTileSelected(section.monIndex, index)
@@ -547,10 +653,11 @@ Item {
                   clip: true
 
                   Repeater {
-                    model: Model.spatialAreas(tile.workspace)
+                    model: tile.areas.length
                     delegate: Rectangle {
                       id: area
-                      required property var modelData
+                      required property int index
+                      readonly property var modelData: tile.areas[index]
                       readonly property var members: modelData.members
                       readonly property int groupIndex: modelData.groupIndex
                       readonly property bool grouped: groupIndex >= 0
@@ -595,10 +702,10 @@ Item {
                         readonly property real cellHeight: height / rows
 
                         Repeater {
-                          model: area.members
+                          model: area.members.length
                           delegate: Rectangle {
                             id: preview
-                            required property var modelData
+                            readonly property var modelData: area.members[index]
                             required property int index
                             x: (index % gridArea.columns) * gridArea.cellWidth
                             y: Math.floor(index / gridArea.columns) * gridArea.cellHeight
@@ -607,6 +714,12 @@ Item {
                             color: "transparent"
                             clip: true
                             readonly property bool selected: root.selectedAddress === modelData.address
+                            function captureState() {
+                              return {address: modelData.address, selected: selected,
+                                sourceAvailable: !!capture.windowSource, hasContent: capture.hasContent,
+                                streamStopped: capture.streamStopped, retries: capture.retryCount,
+                                width: capture.width, height: capture.height}
+                            }
                             function navigationInfo() {
                               var point = preview.mapToItem(keyCatcher, preview.width / 2, preview.height / 2)
                               return {address: modelData.address,
@@ -628,9 +741,59 @@ Item {
                               y: (parent.height - preview.footerHeight - height) / 2
                               width: Math.max(1, Math.min(parent.width - 4, (parent.height - preview.footerHeight - 4) * aspect))
                               height: Math.max(1, width / aspect)
-                              captureSource: root.captureFor(preview.modelData.address)
+                              property bool attached: true
+                              property int retryCount: 0
+                              property bool streamStopped: false
+                              readonly property var windowSource: root.captureFor(preview.modelData.address)
+                              captureSource: attached ? windowSource : null
                               live: true
                               paintCursor: false
+
+                              function resetCapture() {
+                                reconnect.stop()
+                                retryCount = 0
+                                streamStopped = false
+                                attached = true
+                                if (root.opened) retryCapture.restart()
+                                else retryCapture.stop()
+                              }
+                              onWindowSourceChanged: resetCapture()
+                              onHasContentChanged: {
+                                if (hasContent) {
+                                  streamStopped = false
+                                  retryCapture.stop()
+                                }
+                              }
+                              onStopped: {
+                                streamStopped = true
+                                if (root.opened && retryCount < 4 && !retryCapture.running)
+                                  retryCapture.start()
+                              }
+                              Component.onCompleted: resetCapture()
+                              Connections {
+                                target: root
+                                function onOpenedChanged() { capture.resetCapture() }
+                              }
+                              Timer {
+                                id: retryCapture
+                                interval: 500 * Math.pow(2, capture.retryCount)
+                                onTriggered: {
+                                  if (!root.opened || (capture.hasContent && !capture.streamStopped) || capture.retryCount >= 4) return
+                                  capture.retryCount++
+                                  capture.attached = false
+                                  reconnect.restart()
+                                }
+                              }
+                              Timer {
+                                id: reconnect
+                                interval: 50
+                                onTriggered: {
+                                  if (!root.opened) return
+                                  capture.streamStopped = false
+                                  capture.attached = true
+                                  if (capture.retryCount < 4 && !capture.hasContent) retryCapture.restart()
+                                }
+                              }
                             }
                             // Draw above the capture so the preview cannot cover its outline.
                             Rectangle {
@@ -742,5 +905,8 @@ Item {
       }
     }
   }
+        }
+      }
+    }
   }
 }

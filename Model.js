@@ -92,6 +92,13 @@ function nextThumbnail(items, address, direction) {
   return best || current
 }
 
+// Require two failed probes after the animation grace period. Recreate only
+// this monitor, at most four times per opening, with increasing retry delays.
+function retrySurface(alpha, now, openedAt, lastRetryAt, retries, invisibleChecks) {
+  if (alpha >= 0.9 || retries >= 4 || invisibleChecks < 2 || now - openedAt < 1000) return false
+  return now - (lastRetryAt || openedAt) >= 500 * Math.pow(2, retries)
+}
+
 // QVariantLists from Quickshell fail Array.isArray; duck-type on length.
 function asList(value) {
   if (!value || value.length === undefined) return []
@@ -265,6 +272,7 @@ function activationTarget(board, sel) {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    retrySurface: retrySurface,
     nextThumbnail: nextThumbnail,
     spatialAreas: spatialAreas,
     thumbnailColumns: thumbnailColumns,

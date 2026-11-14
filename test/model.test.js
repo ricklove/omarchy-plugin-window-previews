@@ -221,3 +221,14 @@ test("arrow navigation crosses groups and free windows by thumbnail position", (
  assert.equal(Model.nextThumbnail(items,"a","left"),a)
  assert.equal(Model.nextThumbnail([],"a","up"),null)
 })
+
+test("surface recovery ignores normal fades and visible outputs, then backs off", () => {
+ assert.equal(Model.retrySurface(0,500,0,0,0,2),false)
+ assert.equal(Model.retrySurface(1,2000,0,0,0,4),false)
+ assert.equal(Model.retrySurface(0,2000,0,0,0,1),false)
+ assert.equal(Model.retrySurface(0,2000,0,0,0,2),true)
+ assert.equal(Model.retrySurface(0,2500,0,2000,1,2),false)
+ assert.equal(Model.retrySurface(0,3000,0,2000,1,2),true)
+ assert.equal(Model.retrySurface(-1,9000,0,5000,3,2),true)
+ assert.equal(Model.retrySurface(0,99999,0,5000,4,20),false)
+})
