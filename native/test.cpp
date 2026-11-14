@@ -21,5 +21,11 @@ int main() {
     assert(!tabAt(stack, 3, true, 2, 2, true, -300, 122));
     assert(tabAt(stack, 3, true, 2, 2, true, -300, 124)->index == 1);
     assert(tabAt(stack, 3, true, 2, 2, true, -300, 146)->index == 2);
+    for (int i = 0; i < 3; ++i) {
+        auto rect = tabRect(bar,3,i,false,2,2,true);
+        assert(hit(rect.x+rect.w/2,rect.y+rect.h/2)->index == i);
+        auto stackedRect = tabRect(stack,3,i,true,2,2,true);
+        assert(tabAt(stack,3,true,2,2,true,stackedRect.x+10,stackedRect.y+3)->index == i);
+    }
     std::cout << "Tab geometry: horizontal/stacked ordering, gaps, monitor offsets and boundaries passed\n";
 }

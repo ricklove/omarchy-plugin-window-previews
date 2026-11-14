@@ -143,7 +143,14 @@ Item {
   }
 
   HoverPreview {
+    id: hoverPreview
     enabled: root.setting("tabPreviews", true) !== false
+  }
+
+  InlineSnapshots {
+    enabled: root.setting("tabSnapshots", true) !== false && hoverPreview.enabled
+    nativeReady: hoverPreview.nativeLoaded
+    hoverController: hoverPreview
   }
 
   IpcHandler {

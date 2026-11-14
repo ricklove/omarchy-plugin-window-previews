@@ -7,6 +7,15 @@ switching tabs. The popup and capture are destroyed when dismissed. Native
 code, build instructions, resource lifetime and diagnostics are documented in
 [`native/README.md`](native/README.md). Both interfaces share `WindowCapture.qml`.
 
+Visible group tabs also show tiny still snapshots next to their titles. A
+single temporary capture is downsampled into an image no larger than 60 × 36
+pixels, then destroyed. Snapshots refresh when their tab becomes current;
+they do not retain live capture buffers. Set `tabSnapshots` to `false` to keep
+only the live hover preview.
+The images rise above the bar; their raised portion supports click-to-select
+and the same delayed live hover preview. Custom labels have a transparent
+background, with native title colors restored when the custom strip is absent.
+
 Swipe three fingers up: your workspaces spread out across the screen as live
 tiles, and any workspace holding a Hyprland *group* grows a column of that
 group's tabs underneath it, each tab with its own live thumbnail. Click a tile

@@ -12,6 +12,18 @@ struct Rect {
 };
 struct TabHit { int index; Rect rect; };
 
+inline Rect tabRect(Rect bar, int count, int index, bool stacked,
+                    double innerGap, double outerGap, bool keepUpperGap) {
+    if (count <= 0 || index < 0 || index >= count) return {};
+    const double top = keepUpperGap ? outerGap : 0;
+    const double extent = stacked ? (bar.h - top - outerGap * count) / count
+                                 : (bar.w - innerGap * (count - 1)) / count;
+    if (extent <= 0) return {};
+    const double step = extent + (stacked ? outerGap : innerGap);
+    return stacked ? Rect{bar.x, bar.y + top + index * step, bar.w, extent}
+                   : Rect{bar.x + index * step, bar.y + top, extent, bar.h - top - outerGap};
+}
+
 // Match the groupbar's draw geometry, including padding and stacked order.
 inline std::optional<TabHit> tabAt(Rect bar, int count, bool stacked,
                                   double innerGap, double outerGap, bool keepUpperGap,
@@ -24,8 +36,7 @@ inline std::optional<TabHit> tabAt(Rect bar, int count, bool stacked,
     if (extent <= 0 || step <= 0) return {};
     const int index = int(std::floor((stacked ? py - bar.y - top : px - bar.x) / step));
     if (index < 0 || index >= count) return {};
-    Rect rect = stacked ? Rect{bar.x, bar.y + top + index * step, bar.w, extent}
-                        : Rect{bar.x + index * step, bar.y + top, extent, bar.h - top - outerGap};
+    Rect rect = tabRect(bar, count, index, stacked, innerGap, outerGap, keepUpperGap);
     if (!rect.contains(px, py)) return {};
     return TabHit{index, rect};
 }

@@ -12,6 +12,7 @@ Item {
   property var target: null
   property bool ready: false
   property bool nativeLoaded: false
+  property var inlineTarget: null
   readonly property int padding: Style.space(6)
   readonly property int footer: Style.space(24)
   readonly property var monitorScreen: {
@@ -37,9 +38,25 @@ Item {
     if (popup.item) popup.item.releaseCapture()
     target = null
   }
+  function previewInline(data) {
+    if (!enabled || !data) return
+    hide()
+    inlineTarget = data
+    inlineDwell.restart()
+  }
+  function cancelInline() {
+    inlineDwell.stop()
+    inlineTarget = null
+    hide()
+  }
+  Timer {
+    id: inlineDwell
+    interval: 250
+    onTriggered: if (root.enabled && root.inlineTarget) root.target = root.inlineTarget
+  }
   function syncNative() {
     if (!ready) return
-    hide()
+    cancelInline()
     if (enabled) {
       if (!loadNative.running) loadNative.running = true
     } else if (!disableNative.running) disableNative.running = true
@@ -65,6 +82,7 @@ Item {
     target: Hyprland
     function onRawEvent(event) {
       if (event.name !== "omaspaceshover") return
+      if (root.inlineTarget) return // Raised thumbnail hover is owned by QML.
       var next = root.enabled ? HoverModel.parsePayload(String(event.data)) : null
       root.hide()
       root.target = next

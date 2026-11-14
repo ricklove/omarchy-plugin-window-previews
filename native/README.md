@@ -20,13 +20,17 @@ refuses to load. After a Hyprland update, rebuild before loading again.
 After changing native code while it is loaded:
 
 ```sh
-hyprctl plugin unload "$HOME/.config/omarchy/plugins/io.github.terrifiedbug.omaspaces/native/build/omaspaces-hover.so"
+sh native/unload.sh
 make -C native all check
 sh native/load.sh
 ```
 
 The build replaces the binary atomically, so it never truncates a loaded ELF.
 The compiled files in `native/build/` are ignored by Git.
+The loader uses a content-addressed copy in `$XDG_RUNTIME_DIR/omaspaces-native/`
+and records its path there. This avoids loading stale code from the dynamic
+linker's module cache. Native builds disable GNU-unique symbols to permit
+clean unloading; `unload.sh` uses the recorded runtime path.
 
 ## Hover and resource lifetime
 
@@ -75,3 +79,53 @@ dwell, current target, and measured average/maximum check time when enabled.
 The QML status reports whether a popup/capture currently exists. Unloading
 the native plugin unregisters its listeners and command, removes its timer,
 and dismisses an open preview.
+
+## Still snapshots on native tabs
+
+`InlineSnapshots.qml` draws tiny snapshots and custom labels on a transparent,
+click-through strip over each visible groupbar. Hyprland still handles clicks,
+switching, dragging and its groupbar indicators. Native title rendering stays
+enabled so the bar's reserved height does not collapse.
+
+While the custom strips are mapped, textured and visible, the plugin saves
+the four native text colors and temporarily sets their alpha to zero. It
+notifies QML to show custom labels only after suppressing the original text.
+The saved values are restored if the strips disappear, the feature is disabled,
+dragging begins, the compositor config reloads, or the plugin unloads. No
+configuration files are changed. Runtime color updates are preserved for
+restoration. The background remains fully transparent throughout.
+During window drags or resizes the strip temporarily hides, retaining only
+the tiny images, then returns at the new geometry when the operation ends.
+Occluded tabs are omitted to avoid drawing over a window above their group.
+
+Geometry is checked on existing compositor render events at most ten times a
+second, with no render requests or polling process. An inexpensive position/
+z-order fingerprint skips occlusion checks and IPC when nothing has changed.
+Changed geometry is sent as begin/tab/end packets, each below Hyprland's
+1024-byte event limit. At most 128 visible tabs are included.
+
+The QML snapshot queue captures just one window at a time. `grabToImage` renders
+it directly into an image capped at 60 × 36 pixels. The completed grab result
+is retained as a small `QImage` for `Image`, and the capture loader is destroyed.
+The next capture starts after a short yield. A two-second deadline releases a
+failed capture and advances the queue; no permanent live streams are used for
+these inline images. Snapshots refresh when a tab becomes current. Hidden or
+closed groups release their images and strip surfaces.
+
+The raised images are bottom-aligned with the tab and rise above it. Only
+the raised image regions accept input; native tab areas and transparent gaps
+remain click-through. Raised images select their tab on click and use the
+same 250 ms delay for a live popup. The popup uses its existing capture path.
+
+`tabSnapshots: false` disables inline snapshots while retaining the hover
+preview. `tabPreviews: false` disables both. The service initializes the native
+geometry subscription automatically after loading the detector.
+
+```sh
+omarchy-shell omaspaces-snapshots-debug status
+```
+
+Status includes active capture count, retained image pixel dimensions and
+their raw pixel-byte total. That total excludes Qt object, GPU texture and
+small strip-surface overhead. Once the initial queue is complete, the inline
+feature should report zero active captures.
