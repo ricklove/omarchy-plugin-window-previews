@@ -733,67 +733,15 @@ Item {
                             border.width: 0
                             border.color: selected || modelData.front ? Commons.Color.accent : root.surfaceBorder
 
-                            ScreencopyView {
+                            WindowCapture {
                               id: capture
-                              readonly property real aspect: sourceSize.width > 0 && sourceSize.height > 0
-                                ? sourceSize.width / sourceSize.height : section.logicalWidth / section.logicalHeight
+                              captureActive: root.opened
+                              windowSource: root.captureFor(preview.modelData.address)
+                              fallbackAspect: section.logicalWidth / section.logicalHeight
                               x: (parent.width - width) / 2
                               y: (parent.height - preview.footerHeight - height) / 2
                               width: Math.max(1, Math.min(parent.width - 4, (parent.height - preview.footerHeight - 4) * aspect))
                               height: Math.max(1, width / aspect)
-                              property bool attached: true
-                              property int retryCount: 0
-                              property bool streamStopped: false
-                              readonly property var windowSource: root.captureFor(preview.modelData.address)
-                              captureSource: attached ? windowSource : null
-                              live: true
-                              paintCursor: false
-
-                              function resetCapture() {
-                                reconnect.stop()
-                                retryCount = 0
-                                streamStopped = false
-                                attached = true
-                                if (root.opened) retryCapture.restart()
-                                else retryCapture.stop()
-                              }
-                              onWindowSourceChanged: resetCapture()
-                              onHasContentChanged: {
-                                if (hasContent) {
-                                  streamStopped = false
-                                  retryCapture.stop()
-                                }
-                              }
-                              onStopped: {
-                                streamStopped = true
-                                if (root.opened && retryCount < 4 && !retryCapture.running)
-                                  retryCapture.start()
-                              }
-                              Component.onCompleted: resetCapture()
-                              Connections {
-                                target: root
-                                function onOpenedChanged() { capture.resetCapture() }
-                              }
-                              Timer {
-                                id: retryCapture
-                                interval: 500 * Math.pow(2, capture.retryCount)
-                                onTriggered: {
-                                  if (!root.opened || (capture.hasContent && !capture.streamStopped) || capture.retryCount >= 4) return
-                                  capture.retryCount++
-                                  capture.attached = false
-                                  reconnect.restart()
-                                }
-                              }
-                              Timer {
-                                id: reconnect
-                                interval: 50
-                                onTriggered: {
-                                  if (!root.opened) return
-                                  capture.streamStopped = false
-                                  capture.attached = true
-                                  if (capture.retryCount < 4 && !capture.hasContent) retryCapture.restart()
-                                }
-                              }
                             }
                             // Draw above the capture so the preview cannot cover its outline.
                             Rectangle {

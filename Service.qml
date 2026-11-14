@@ -142,6 +142,10 @@ Item {
     }
   }
 
+  HoverPreview {
+    enabled: root.setting("tabPreviews", true) !== false
+  }
+
   IpcHandler {
     target: "omaspaces"
 

@@ -1,5 +1,12 @@
 # OmaSpaces
 
+This local version also previews native Hyprland group tabs on hover. Build
+the small bridge with `make -C native all check`; the existing service loads
+it automatically. Hover for 250 ms to see a live quarter-size preview without
+switching tabs. The popup and capture are destroyed when dismissed. Native
+code, build instructions, resource lifetime and diagnostics are documented in
+[`native/README.md`](native/README.md). Both interfaces share `WindowCapture.qml`.
+
 Swipe three fingers up: your workspaces spread out across the screen as live
 tiles, and any workspace holding a Hyprland *group* grows a column of that
 group's tabs underneath it, each tab with its own live thumbnail. Click a tile
@@ -29,9 +36,9 @@ unbound, so nothing of yours is taken over. If you already bound swipe-up to
 something, set `gesture` to `false` (below) and bind OmaSpaces to whatever you
 prefer.
 
-No external dependencies and no privileged step. The plugin is QML loaded into
-the Omarchy shell you're already running, plus one `hyprctl` call at startup to
-register the gesture.
+The overview is QML loaded into the Omarchy shell you're already running.
+The optional native hover bridge is compiled against the installed Hyprland
+headers; see `native/README.md`. Neither feature needs a privileged install.
 
 ## Using it
 
