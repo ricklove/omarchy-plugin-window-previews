@@ -14,6 +14,84 @@ function normalizeWorkspaceCount(value, fallback) {
   return Math.max(1, Math.min(MAX_WORKSPACES, n))
 }
 
+// Use the same connector-to-block state as Omarchy's workspace bar.
+function parseWorkspaceBlocks(text) {
+  var blocks = {}
+  String(text || "").split("\n").forEach(function(line) {
+    var fields = line.split("\t")
+    if (fields.length < 3 || !fields[1] || !/^\d+$/.test(fields[0])) return
+    var block = Number(fields[0])
+    if (Number.isSafeInteger(block)) blocks[fields[1]] = block
+  })
+  return blocks
+}
+
+// Keep groups in their own regions. Pack overlapping free windows into the
+// union of their original regions, without moving any real desktop window.
+function spatialAreas(workspace) {
+  var areas = []
+  workspace.groups.forEach(function(group, index) {
+    var front = group.members[frontIndex(group)]
+    if (!front) return
+    areas.push({ rect: front.rect, groupIndex: index, members: group.members })
+  })
+  var free = workspace.windows.filter(function(w) { return !w.groupKey })
+    .map(function(w) { return { rect: w.rect, groupIndex: -1, members: [w] } })
+  function overlaps(a, b) {
+    return a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+  }
+  function union(a, b) {
+    var x = Math.min(a.x, b.x), y = Math.min(a.y, b.y)
+    return {x:x, y:y, w:Math.max(a.x+a.w,b.x+b.w)-x, h:Math.max(a.y+a.h,b.y+b.h)-y}
+  }
+  // Repeat after every merge so transitive overlap cannot leave a hidden card.
+  for (var i = 0; i < free.length; i++) {
+    for (var j = i + 1; j < free.length;) {
+      if (overlaps(free[i].rect, free[j].rect)) {
+        free[i].rect = union(free[i].rect, free[j].rect)
+        free[i].members = free[i].members.concat(free[j].members)
+        free.splice(j, 1)
+        i = -1
+        break
+      } else j++
+    }
+  }
+  return areas.concat(free)
+}
+
+function thumbnailColumns(count, width, height, sourceAspect) {
+  var best = 1, bestSize = -1
+  for (var columns = 1; columns <= count; columns++) {
+    var rows = Math.ceil(count / columns)
+    var size = Math.min(width / columns, height / rows * sourceAspect)
+    if (size > bestSize) { bestSize = size; best = columns }
+  }
+  return best
+}
+
+function fitTileWidth(count, width, height, aspect, gap) {
+  if (!count) return 1
+  return Math.max(1, Math.floor(Math.min((width - gap * (count - 1)) / count, height / aspect)))
+}
+
+// Navigate rendered thumbnail centres, without workspace/group nesting.
+function nextThumbnail(items, address, direction) {
+  if (!items.length) return null
+  var current = items.find(function(item) { return item.address === address })
+  if (!current) return items[0]
+  var best = null, score = Infinity
+  items.forEach(function(item) {
+    if (item.address === address) return
+    var dx = item.x - current.x, dy = item.y - current.y
+    var primary = direction === "right" ? dx : direction === "left" ? -dx : direction === "down" ? dy : -dy
+    var cross = direction === "left" || direction === "right" ? Math.abs(dy) : Math.abs(dx)
+    if (primary <= 1) return
+    var candidate = primary + cross * 2
+    if (candidate < score) { best = item; score = candidate }
+  })
+  return best || current
+}
+
 // QVariantLists from Quickshell fail Array.isArray; duck-type on length.
 function asList(value) {
   if (!value || value.length === undefined) return []
@@ -52,14 +130,16 @@ function groupKey(grouped) {
 // board = [{ monitor: {id,name,x,y,width,height,scale,focused,activeWorkspaceId},
 //            workspaces: [{ id, current, windows: [{address,title,appId,rect,front,groupKey,groupSize,focusHistoryID}],
 //                           groups: [{ key, members: [window…] /* tab order */ }] }] }]
-// Workspace ids 1..count always appear (empty ones included, in order); any
-// higher id that has a window is appended after them.
-function buildBoard(monitors, clients, count) {
+// Each monitor shows its own block of workspace slots, plus occupied extras.
+function buildBoard(monitors, clients, count, blocks, occupiedOnly) {
   var mons = asList(monitors).filter(function(m) { return m && m.id !== undefined })
   var wins = asList(clients).filter(isBoardWindow)
   return mons.map(function(mon) {
     var monId = Number(mon.id)
     var activeWs = mon.activeWorkspace && mon.activeWorkspace.id !== undefined ? Number(mon.activeWorkspace.id) : -1
+    var block = blocks && blocks[String(mon.name)]
+    if (block === undefined) block = activeWs > 0 ? Math.floor((activeWs - 1) / 10) : 0
+    var base = block * 10
     var byWs = {}
     wins.filter(function(c) { return Number(c.monitor) === monId }).forEach(function(c) {
       var ws = Number(c.workspace.id)
@@ -67,9 +147,12 @@ function buildBoard(monitors, clients, count) {
       byWs[ws].push(c)
     })
     var ids = []
-    for (var i = 1; i <= count; i++) ids.push(i)
-    Object.keys(byWs).map(Number).filter(function(id) { return id > count }).sort(function(a, b) { return a - b })
+    for (var i = 1; i <= count; i++) ids.push(base + i)
+    // Include occupied extras and the current workspace even when it is empty.
+    if (activeWs > 0 && ids.indexOf(activeWs) === -1) ids.push(activeWs)
+    Object.keys(byWs).map(Number).filter(function(id) { return ids.indexOf(id) === -1 }).sort(function(a, b) { return a - b })
       .forEach(function(id) { ids.push(id) })
+    if (occupiedOnly) ids = ids.filter(function(id) { return byWs[id] && byWs[id].length > 0 })
     var workspaces = ids.map(function(id) {
       var clientsHere = byWs[id] || []
       var windows = clientsHere.map(function(c) {
@@ -126,7 +209,9 @@ function initialSelection(board) {
     for (var w = 0; w < board[m].workspaces.length; w++)
       if (board[m].workspaces[w].current) return { mon: m, ws: w, group: -1, member: -1 }
   }
-  return { mon: 0, ws: 0, group: -1, member: -1 }
+  for (var m = 0; m < board.length; m++)
+    if (board[m].workspaces.length > 0) return { mon: m, ws: 0, group: -1, member: -1 }
+  return null
 }
 
 // The front tab is the one Hyprland is showing, so entering a column lands on
@@ -180,6 +265,11 @@ function activationTarget(board, sel) {
 
 if (typeof module !== "undefined") {
   module.exports = {
+    nextThumbnail: nextThumbnail,
+    spatialAreas: spatialAreas,
+    thumbnailColumns: thumbnailColumns,
+    fitTileWidth: fitTileWidth,
+    parseWorkspaceBlocks: parseWorkspaceBlocks,
     DEFAULT_WORKSPACES: DEFAULT_WORKSPACES,
     MAX_WORKSPACES: MAX_WORKSPACES,
     normalizeWorkspaceCount: normalizeWorkspaceCount,

@@ -9,12 +9,9 @@ import qs.Commons as Commons
 import qs.Ui
 import "Model.js" as Model
 
-// Mission-Control-style board: the workspaces of every monitor as live tiles
-// in a row, and under any workspace that holds a Hyprland group, that group's
-// tabs stacked vertically with their own live thumbnails. Hyprland's groupbar
-// shows tab titles in hardcoded white and nothing else, so the vertical
-// column is the whole point of the plugin; it is the only accent-tinted
-// surface on the board so a group can never be mistaken for a workspace.
+// Each monitor shows its own occupied workspaces, scaled to fit its output.
+// Group members share a grid in the group's original region. Overlapping
+// free windows share a grid in their original combined region.
 //
 // The board is a snapshot, not a binding: Hyprland.refreshToplevels() is
 // asynchronous and blanks every lastIpcObject until the reply lands, so a
@@ -34,6 +31,14 @@ Item {
   property var board: []
   property var toplevelByAddress: ({})
   property var selection: null
+  property string selectedAddress: ""
+  property var previews: []
+
+  function registerPreview(item) { root.previews = root.previews.concat([item]) }
+  function unregisterPreview(item) { root.previews = root.previews.filter(function(p) { return p !== item }) }
+  function thumbnailItems() {
+    return root.previews.filter(function(p) { return !!p }).map(function(p) { return p.navigationInfo() })
+  }
   property int settleTicks: 0
   // Held between dismiss() and the dispatch that follows it; see activate().
   property var pendingTarget: null
@@ -87,13 +92,12 @@ Item {
     return ""
   }
 
-  // One window on the focused monitor showing every monitor's section, the
-  // shape sirmenef's overview uses; a per-screen Variants would double-draw
-  // the same board.
-  readonly property var targetScreen: {
-    var screens = Quickshell.screens
-    for (var s = 0; s < screens.length; s++) if (screens[s].name === root.focusedMonitorName) return screens[s]
-    return screens.length > 0 ? screens[0] : null
+  // Each physical output has its own surface and only its own board row.
+  function focusOverviewKeys() {
+    for (var i = 0; i < overviewPanels.count; i++) {
+      var instance = overviewPanels.objectAt(i)
+      if (instance && instance.ownsKeyboard) instance.focusKeys()
+    }
   }
 
   function setting(name, fallback) {
@@ -110,11 +114,12 @@ Item {
   function open(payloadJson) {
     root.opened = true
     root.selection = null
+    root.selectedAddress = ""
     // Paint immediately from the IPC objects the shell already holds, then
     // refresh: a fresh reply lands ~0.5 s later and swaps the board in place.
     root.applyBoard()
     root.rebuild()
-    Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+    Qt.callLater(root.focusOverviewKeys)
   }
 
   function close() {
@@ -163,7 +168,7 @@ Item {
     if (monitors.length === 0) return false
     if (!complete && force !== true) return false
     root.toplevelByAddress = byAddress
-    root.board = Model.buildBoard(monitors, clients, root.workspaceCount)
+    root.board = Model.buildBoard(monitors, clients, root.workspaceCount, Model.parseWorkspaceBlocks(workspaceBlocks.text()), true)
     if (!root.validSelection(root.selection)) root.selection = Model.initialSelection(root.board)
     return complete
   }
@@ -180,11 +185,17 @@ Item {
   }
 
   function move(key) {
-    if (!root.validSelection(root.selection)) return
-    root.selection = Model.moveSelection(root.board, root.selection, key)
+    var next = Model.nextThumbnail(root.thumbnailItems(), root.selectedAddress, key)
+    if (!next) return
+    root.selectedAddress = next.address
+    root.selection = next.selection
   }
 
   function activateSelection() {
+    if (root.selectedAddress) {
+      root.activate({kind: "window", address: root.selectedAddress})
+      return
+    }
     if (!root.validSelection(root.selection)) return
     root.activate(Model.activationTarget(root.board, root.selection))
   }
@@ -229,6 +240,15 @@ Item {
   function isMemberSelected(monIndex, wsIndex, groupIndex, memberIndex) {
     var sel = root.selection
     return !!sel && sel.mon === monIndex && sel.ws === wsIndex && sel.group === groupIndex && sel.member === memberIndex
+  }
+
+  FileView {
+    id: workspaceBlocks
+    path: (Quickshell.env("XDG_STATE_HOME") || Quickshell.env("HOME") + "/.local/state") + "/omarchy/monitor-workspaces"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: { if (root.opened) root.rebuild() }
   }
 
   FileView {
@@ -285,15 +305,30 @@ Item {
     }
   }
 
-  PanelWindow {
+  Instantiator {
+    id: overviewPanels
+    model: Quickshell.screens
+    delegate: PanelWindow {
     id: panel
+    required property var modelData
+    readonly property int monitorIndex: {
+      for (var i = 0; i < root.board.length; i++)
+        if (root.board[i].monitor.name === modelData.name) return i
+      return -1
+    }
+    readonly property var monitorRow: monitorIndex >= 0 ? root.board[monitorIndex] : null
+    readonly property bool ownsKeyboard: root.selection
+      ? root.selection.mon === monitorIndex : modelData.name === root.focusedMonitorName
+    function focusKeys() { keyCatcher.forceActiveFocus() }
+    onOwnsKeyboardChanged: { if (ownsKeyboard && root.opened) Qt.callLater(focusKeys) }
+
     visible: root.opened
-    screen: root.targetScreen
+    screen: modelData
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "omarchy-omaspaces"
     WlrLayershell.layer: WlrLayer.Overlay
-    WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
+    WlrLayershell.keyboardFocus: ownsKeyboard ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
 
     Rectangle {
@@ -387,32 +422,42 @@ Item {
           textFormat: Text.PlainText
           text: root.board.length === 0
             ? "Loading…"
-            : root.plural(root.workspaceCount, "workspace") + " · " + root.plural(root.windowCount, "window") + " · " + root.plural(root.groupCount, "group")
+            : root.plural(panel.monitorRow ? panel.monitorRow.workspaces.length : 0, "workspace") + " · " + panel.modelData.name
           font.family: root.fontFamily
           font.pixelSize: Style.font.bodySmall
           color: root.faintForeground
         }
       }
 
+      Text {
+        visible: root.board.length > 0 && (!panel.monitorRow || panel.monitorRow.workspaces.length === 0)
+        text: "No windows on this monitor"
+        textFormat: Text.PlainText
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        color: root.foreground
+      }
+
       // ---- One section per monitor: a row of workspace tiles, then a row of
       //      slots holding the group columns that hang under those tiles.
       Repeater {
-        model: root.board
+        model: panel.monitorRow ? [panel.monitorRow] : []
 
         delegate: Column {
           id: section
           required property var modelData
           required property int index
 
-          readonly property int monIndex: index
+          readonly property int monIndex: panel.monitorIndex
           readonly property var monitor: modelData.monitor
           readonly property var workspaces: modelData.workspaces
           readonly property real logicalWidth: monitor.width / monitor.scale
           readonly property real logicalHeight: monitor.height / monitor.scale
           readonly property int tileCount: workspaces.length
-          readonly property int tileWidth: Math.max(Style.space(90),
-            Math.min(Style.space(300),
-              Math.floor((panel.width - root.boardMargin * 2 - root.tileSpacing * (tileCount - 1)) / tileCount)))
+          readonly property int tileWidth: Model.fitTileWidth(tileCount,
+            boardColumn.width,
+            Math.max(1, panel.height - root.boardMargin * 2 - headerColumn.height - boardColumn.spacing - Style.space(48)),
+            logicalHeight / logicalWidth, root.tileSpacing)
           readonly property int tileHeight: Math.round(tileWidth * logicalHeight / logicalWidth)
 
           // Several groups on one workspace share the tile's width.
@@ -441,7 +486,7 @@ Item {
               width: focusedChip.implicitWidth + Style.space(8)
               height: focusedChip.implicitHeight + Style.space(2)
               radius: Style.space(3)
-              color: Util.alpha(Commons.Color.accent, 0.18)
+              color: "transparent"
 
               Text {
                 id: focusedChip
@@ -474,8 +519,8 @@ Item {
                 width: section.tileWidth
                 height: section.tileHeight
                 radius: Style.cornerRadius
-                color: root.background
-                borderSpec: workspace.current ? Border.flat(Commons.Color.accent, 2) : Border.flat(root.surfaceBorder, 1)
+                color: "transparent"
+                borderSpec: Border.flat("transparent", 0)
 
                 MouseArea {
                   anchors.fill: parent
@@ -502,105 +547,135 @@ Item {
                   clip: true
 
                   Repeater {
-                    model: tile.workspace.windows
-
-                    delegate: Item {
-                      id: windowItem
+                    model: Model.spatialAreas(tile.workspace)
+                    delegate: Rectangle {
+                      id: area
                       required property var modelData
+                      readonly property var members: modelData.members
+                      readonly property int groupIndex: modelData.groupIndex
+                      readonly property bool grouped: groupIndex >= 0
+                      readonly property real leftEdge: Math.max(0, modelData.rect.x)
+                      readonly property real topEdge: Math.max(0, modelData.rect.y)
+                      x: Math.round(leftEdge * tileCanvas.width)
+                      y: Math.round(topEdge * tileCanvas.height)
+                      width: Math.max(1, Math.round((Math.min(1, modelData.rect.x + modelData.rect.w) - leftEdge) * tileCanvas.width))
+                      height: Math.max(1, Math.round((Math.min(1, modelData.rect.y + modelData.rect.h) - topEdge) * tileCanvas.height))
+                      clip: true
+                      color: "transparent"
+                      border.width: 0
+                      border.color: grouped ? Commons.Color.accent : root.surfaceBorder
+                      readonly property int labelHeight: members.length > 1 ? Style.space(22) : 0
 
-                      // A tile mirrors the monitor, so a group contributes
-                      // only the tab Hyprland is showing. `visible` tracks tab
-                      // state, not workspace visibility, so a group on an
-                      // off-screen workspace still has exactly one front tab.
-                      visible: modelData.front || modelData.groupSize < 2
-                      x: Math.round(modelData.rect.x * tileCanvas.width)
-                      y: Math.round(modelData.rect.y * tileCanvas.height)
-                      width: Math.max(Style.space(10), Math.round(modelData.rect.w * tileCanvas.width))
-                      height: Math.max(Style.space(10), Math.round(modelData.rect.h * tileCanvas.height))
-
-                      Rectangle {
-                        anchors.fill: parent
-                        radius: root.thumbRadius
-                        color: Commons.Color.menu.selectedBackground
-                      }
-
-                      ScreencopyView {
-                        id: windowThumb
-                        readonly property real srcAspect: sourceSize.width > 0 && sourceSize.height > 0
-                          ? sourceSize.width / sourceSize.height
-                          : section.logicalWidth / section.logicalHeight
-
-                        anchors.centerIn: parent
-                        width: Math.min(parent.width, parent.height * srcAspect)
-                        height: Math.min(parent.height, parent.width / srcAspect)
-                        captureSource: root.captureFor(windowItem.modelData.address)
-                        live: true
-                        paintCursor: false
-                        layer.enabled: true
-                        layer.smooth: true
-                        layer.effect: MultiEffect {
-                          maskEnabled: true
-                          maskSource: windowThumbMask
-                          maskThresholdMin: 0.5
-                          maskSpreadAtMin: 1.0
-                        }
+                      Text {
+                        visible: area.labelHeight > 0
+                        x: Style.space(6)
+                        height: area.labelHeight
+                        width: Math.max(0, parent.width - x * 2)
+                        textFormat: Text.PlainText
+                        text: (area.grouped ? "GROUP · " : "WINDOWS · ") + area.members.length
+                        color: area.grouped ? Commons.Color.accent : root.foreground
+                        font.family: root.fontFamily
+                        font.pixelSize: Style.font.caption
+                        elide: Text.ElideRight
+                        verticalAlignment: Text.AlignVCenter
                       }
 
                       Item {
-                        id: windowThumbMask
-                        anchors.centerIn: parent
-                        width: windowThumb.width
-                        height: windowThumb.height
-                        visible: false
-                        layer.enabled: true
-                        layer.smooth: true
+                        id: gridArea
+                        x: Style.space(4)
+                        y: area.labelHeight + Style.space(4)
+                        width: Math.max(1, area.width - x * 2)
+                        height: Math.max(1, area.height - y - Style.space(4))
+                        readonly property int columns: Model.thumbnailColumns(area.members.length,
+                          width, height, area.members.length > 0
+                            ? area.members[0].rect.w * section.logicalWidth / Math.max(1, area.members[0].rect.h * section.logicalHeight)
+                            : section.logicalWidth / section.logicalHeight)
+                        readonly property int rows: Math.max(1, Math.ceil(area.members.length / columns))
+                        readonly property real cellWidth: width / columns
+                        readonly property real cellHeight: height / rows
 
-                        Rectangle {
-                          anchors.fill: parent
-                          radius: root.thumbRadius
+                        Repeater {
+                          model: area.members
+                          delegate: Rectangle {
+                            id: preview
+                            required property var modelData
+                            required property int index
+                            x: (index % gridArea.columns) * gridArea.cellWidth
+                            y: Math.floor(index / gridArea.columns) * gridArea.cellHeight
+                            width: Math.max(1, gridArea.cellWidth - Style.space(4))
+                            height: Math.max(1, gridArea.cellHeight - Style.space(4))
+                            color: "transparent"
+                            clip: true
+                            readonly property bool selected: root.selectedAddress === modelData.address
+                            function navigationInfo() {
+                              var point = preview.mapToItem(keyCatcher, preview.width / 2, preview.height / 2)
+                              return {address: modelData.address,
+                                x: point.x + section.monitor.x, y: point.y + section.monitor.y,
+                                selection: {mon: section.monIndex, ws: tile.index,
+                                  group: area.groupIndex, member: area.grouped ? preview.index : -1}}
+                            }
+                            Component.onCompleted: root.registerPreview(preview)
+                            Component.onDestruction: root.unregisterPreview(preview)
+                            readonly property int footerHeight: Math.min(Style.space(24), height / 3)
+                            border.width: 0
+                            border.color: selected || modelData.front ? Commons.Color.accent : root.surfaceBorder
+
+                            ScreencopyView {
+                              id: capture
+                              readonly property real aspect: sourceSize.width > 0 && sourceSize.height > 0
+                                ? sourceSize.width / sourceSize.height : section.logicalWidth / section.logicalHeight
+                              x: (parent.width - width) / 2
+                              y: (parent.height - preview.footerHeight - height) / 2
+                              width: Math.max(1, Math.min(parent.width - 4, (parent.height - preview.footerHeight - 4) * aspect))
+                              height: Math.max(1, width / aspect)
+                              captureSource: root.captureFor(preview.modelData.address)
+                              live: true
+                              paintCursor: false
+                            }
+                            // Draw above the capture so the preview cannot cover its outline.
+                            Rectangle {
+                              anchors.fill: capture
+                              anchors.margins: -2
+                              z: 1
+                              visible: preview.selected
+                              color: "transparent"
+                              border.width: 2
+                              border.color: Commons.Color.accent
+                            }
+                            Image {
+                              visible: !capture.hasContent
+                              anchors.centerIn: capture
+                              width: Math.max(1, Math.min(Style.space(32), capture.width, capture.height))
+                              height: width
+                              source: root.appIcon(preview.modelData.appId)
+                              fillMode: Image.PreserveAspectFit
+                              asynchronous: true
+                            }
+                            Text {
+                              x: Style.space(4)
+                              y: parent.height - preview.footerHeight
+                              width: Math.max(0, parent.width - x * 2)
+                              height: preview.footerHeight
+                              textFormat: Text.PlainText
+                              text: preview.modelData.title
+                              color: preview.selected ? Commons.Color.accent : root.foreground
+                              font.family: root.fontFamily
+                              font.pixelSize: Style.font.bodySmall
+                              verticalAlignment: Text.AlignVCenter
+                              elide: Text.ElideRight
+                            }
+                            MouseArea {
+                              id: previewMouse
+                              anchors.fill: parent
+                              hoverEnabled: true
+                              onEntered: {
+                                root.selectedAddress = preview.modelData.address
+                                root.selection = preview.navigationInfo().selection
+                              }
+                              onClicked: root.activate({kind: "window", address: preview.modelData.address})
+                            }
+                          }
                         }
-                      }
-
-                      Image {
-                        visible: !windowThumb.hasContent
-                        anchors.centerIn: parent
-                        width: Math.min(Style.font.iconLarge, parent.height / 2)
-                        height: width
-                        sourceSize.width: Math.max(1, Math.round(width * Screen.devicePixelRatio))
-                        sourceSize.height: Math.max(1, Math.round(height * Screen.devicePixelRatio))
-                        fillMode: Image.PreserveAspectFit
-                        asynchronous: true
-                        source: root.appIcon(windowItem.modelData.appId)
-                      }
-
-                      // First cue that a group lives on this workspace; the
-                      // column underneath is the second.
-                      Rectangle {
-                        visible: windowItem.modelData.groupSize > 1
-                        anchors.right: parent.right
-                        anchors.bottom: parent.bottom
-                        anchors.margins: Style.space(4)
-                        width: groupChip.implicitWidth + Style.space(8)
-                        height: groupChip.implicitHeight + Style.space(2)
-                        radius: Style.space(3)
-                        color: Util.alpha(root.background, 0.85)
-
-                        Text {
-                          id: groupChip
-                          anchors.centerIn: parent
-                          textFormat: Text.PlainText
-                          text: "\uf24d  " + windowItem.modelData.groupSize // nf-fa-clone
-                          font.family: root.glyphFamily
-                          font.pixelSize: Style.font.caption
-                          color: Commons.Color.accent
-                        }
-                      }
-
-                      MouseArea {
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        onEntered: root.selection = { mon: section.monIndex, ws: tile.index, group: -1, member: -1 }
-                        onClicked: root.activate({ kind: "window", address: windowItem.modelData.address })
                       }
                     }
                   }
@@ -613,7 +688,7 @@ Item {
                   width: numberChip.implicitWidth + Style.space(10)
                   height: numberChip.implicitHeight + Style.space(4)
                   radius: Style.space(3)
-                  color: Commons.Color.menu.selectedBackground
+                  color: "transparent"
 
                   Text {
                     id: numberChip
@@ -635,7 +710,7 @@ Item {
                   width: currentChip.implicitWidth + Style.space(8)
                   height: currentChip.implicitHeight + Style.space(2)
                   radius: Style.space(3)
-                  color: Util.alpha(Commons.Color.accent, 0.18)
+                  color: "transparent"
 
                   Text {
                     id: currentChip
@@ -656,290 +731,16 @@ Item {
                   anchors.margins: -Style.space(4)
                   radius: Style.cornerRadius
                   color: "transparent"
-                  border.width: Math.max(1, Style.space(2))
+                  border.width: 0
                   border.color: Style.focusStateColor(root.foreground, Commons.Color.accent)
                 }
               }
             }
           }
 
-          // ---- Group columns. One slot per tile, exactly tile-wide, so a
-          //      column can never drift under its neighbour.
-          Row {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: root.tileSpacing
-
-            Repeater {
-              model: section.workspaces
-
-              delegate: Item {
-                id: slot
-                required property var modelData
-                required property int index
-
-                readonly property int railHeight: Style.space(14)
-
-                width: section.tileWidth
-                implicitHeight: railHeight + trayRow.height
-                height: implicitHeight
-
-                // Rail from where the front tab sits on the tile down into
-                // the tray: with two groups on one workspace, two rails leave
-                // the tile at the x each group occupies on screen.
-                Repeater {
-                  model: slot.modelData.groups
-
-                  delegate: Rectangle {
-                    required property var modelData
-
-                    readonly property var frontTab: modelData.members[Model.frontIndex(modelData)]
-
-                    x: Math.max(0, Math.min(slot.width - width,
-                      Math.round((frontTab.rect.x + frontTab.rect.w / 2) * slot.width - width / 2)))
-                    width: Math.max(1, Style.space(2))
-                    height: slot.railHeight
-                    color: Commons.Color.accent
-                  }
-                }
-
-                Row {
-                  id: trayRow
-                  y: slot.railHeight
-                  anchors.horizontalCenter: parent.horizontalCenter
-                  spacing: root.columnSpacing
-
-                  Repeater {
-                    model: slot.modelData.groups
-
-                    delegate: BorderSurface {
-                      id: tray
-                      required property var modelData
-                      required property int index
-
-                      width: section.columnWidth(slot.modelData.groups.length)
-                      height: contentTopInset + trayContent.height + contentBottomInset
-                      radius: Style.cornerRadius
-                      padding: Style.space(8)
-                      // Opaque so a busy desktop cannot show through the one
-                      // surface that has to read as "not a workspace", washed
-                      // with accent because the tiles above it are neutral.
-                      color: Qt.tint(root.background, Util.alpha(Commons.Color.accent, 0.14))
-                      borderSpec: Border.flat(Util.alpha(Commons.Color.accent, 0.6), 1)
-
-                      Column {
-                        id: trayContent
-                        anchors.top: parent.top
-                        anchors.left: parent.left
-                        anchors.right: parent.right
-                        anchors.topMargin: tray.contentTopInset
-                        anchors.leftMargin: tray.contentLeftInset
-                        anchors.rightMargin: tray.contentRightInset
-                        spacing: Style.space(8)
-
-                        Text {
-                          textFormat: Text.PlainText
-                          text: "\uf24d  GROUP · " + tray.modelData.members.length + " TABS" // nf-fa-clone
-                          font.family: root.glyphFamily
-                          font.pixelSize: Style.font.caption
-                          font.bold: true
-                          font.letterSpacing: 1
-                          color: Commons.Color.accent
-                          elide: Text.ElideRight
-                          width: parent.width
-                        }
-
-                        Repeater {
-                          model: tray.modelData.members
-
-                          delegate: BorderSurface {
-                            id: card
-                            required property var modelData
-                            required property int index
-
-                            readonly property bool selected: root.isMemberSelected(section.monIndex, slot.index, tray.index, index)
-                            readonly property int thumbHeight: Math.round((width - contentLeftInset - contentRightInset) * section.logicalHeight / section.logicalWidth)
-                            readonly property int footerHeight: Math.max(Style.space(16), Style.font.bodySmall + Style.space(4))
-
-                            width: trayContent.width
-                            height: contentTopInset + thumbHeight + Style.space(4) + footerHeight + contentBottomInset
-                            radius: Style.space(6)
-                            padding: Style.space(4)
-                            color: root.background
-                            borderSpec: modelData.front ? Border.flat(Commons.Color.accent, 2) : Border.flat(root.surfaceBorder, 1)
-
-                            MouseArea {
-                              anchors.fill: parent
-                              hoverEnabled: true
-                              onEntered: root.selection = { mon: section.monIndex, ws: slot.index, group: tray.index, member: card.index }
-                              onClicked: root.activate({ kind: "window", address: card.modelData.address })
-                            }
-
-                            Column {
-                              anchors.fill: parent
-                              anchors.topMargin: card.contentTopInset
-                              anchors.rightMargin: card.contentRightInset
-                              anchors.bottomMargin: card.contentBottomInset
-                              anchors.leftMargin: card.contentLeftInset
-                              spacing: Style.space(4)
-
-                              Item {
-                                id: cardThumb
-                                width: parent.width
-                                height: card.thumbHeight
-
-                                Rectangle {
-                                  anchors.fill: parent
-                                  radius: root.thumbRadius
-                                  color: Commons.Color.menu.selectedBackground
-                                }
-
-                                // A group's background tab is mapped but not
-                                // visible, and the compositor still hands
-                                // back real pixels for it — that is what
-                                // makes a tab column worth drawing.
-                                ScreencopyView {
-                                  id: memberThumb
-                                  readonly property real srcAspect: sourceSize.width > 0 && sourceSize.height > 0
-                                    ? sourceSize.width / sourceSize.height
-                                    : section.logicalWidth / section.logicalHeight
-
-                                  anchors.centerIn: parent
-                                  width: Math.min(parent.width, parent.height * srcAspect)
-                                  height: Math.min(parent.height, parent.width / srcAspect)
-                                  captureSource: root.captureFor(card.modelData.address)
-                                  live: true
-                                  paintCursor: false
-                                  opacity: card.modelData.front ? 1 : 0.8
-                                  layer.enabled: true
-                                  layer.smooth: true
-                                  layer.effect: MultiEffect {
-                                    maskEnabled: true
-                                    maskSource: memberThumbMask
-                                    maskThresholdMin: 0.5
-                                    maskSpreadAtMin: 1.0
-                                  }
-                                }
-
-                                Item {
-                                  id: memberThumbMask
-                                  anchors.centerIn: parent
-                                  width: memberThumb.width
-                                  height: memberThumb.height
-                                  visible: false
-                                  layer.enabled: true
-                                  layer.smooth: true
-
-                                  Rectangle {
-                                    anchors.fill: parent
-                                    radius: root.thumbRadius
-                                  }
-                                }
-
-                                Image {
-                                  visible: !memberThumb.hasContent
-                                  anchors.centerIn: parent
-                                  width: Math.min(Style.font.iconLarge, parent.height - Style.space(4))
-                                  height: width
-                                  sourceSize.width: Math.max(1, Math.round(width * Screen.devicePixelRatio))
-                                  sourceSize.height: Math.max(1, Math.round(height * Screen.devicePixelRatio))
-                                  fillMode: Image.PreserveAspectFit
-                                  asynchronous: true
-                                  source: root.appIcon(card.modelData.appId)
-                                }
-
-                                Rectangle {
-                                  visible: card.modelData.front
-                                  anchors.right: parent.right
-                                  anchors.top: parent.top
-                                  anchors.margins: Style.space(3)
-                                  width: frontChip.implicitWidth + Style.space(6)
-                                  height: frontChip.implicitHeight + Style.space(2)
-                                  radius: Style.space(3)
-                                  color: Util.alpha(root.background, 0.85)
-
-                                  Text {
-                                    id: frontChip
-                                    anchors.centerIn: parent
-                                    text: "FRONT"
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    font.bold: true
-                                    color: Commons.Color.accent
-                                  }
-                                }
-                              }
-
-                              Row {
-                                width: parent.width
-                                height: card.footerHeight
-                                spacing: Style.space(4)
-
-                                // Tab number, filled for the tab Hyprland is
-                                // showing so the column reads like a stack.
-                                Rectangle {
-                                  anchors.verticalCenter: parent.verticalCenter
-                                  width: card.footerHeight
-                                  height: card.footerHeight
-                                  radius: width / 2
-                                  color: card.modelData.front ? Commons.Color.accent : "transparent"
-                                  border.width: card.modelData.front ? 0 : 1
-                                  border.color: root.surfaceBorder
-
-                                  Text {
-                                    anchors.centerIn: parent
-                                    textFormat: Text.PlainText
-                                    text: card.index + 1
-                                    font.family: root.fontFamily
-                                    font.pixelSize: Style.font.caption
-                                    font.bold: true
-                                    color: card.modelData.front ? root.background : root.foreground
-                                  }
-                                }
-
-                                Image {
-                                  anchors.verticalCenter: parent.verticalCenter
-                                  width: Style.font.iconSmall
-                                  height: width
-                                  sourceSize.width: Math.max(1, Math.round(width * Screen.devicePixelRatio))
-                                  sourceSize.height: Math.max(1, Math.round(height * Screen.devicePixelRatio))
-                                  fillMode: Image.PreserveAspectFit
-                                  asynchronous: true
-                                  source: root.appIcon(card.modelData.appId)
-                                }
-
-                                Text {
-                                  anchors.verticalCenter: parent.verticalCenter
-                                  textFormat: Text.PlainText
-                                  text: card.modelData.title
-                                  width: parent.width - card.footerHeight - Style.font.iconSmall - Style.space(8)
-                                  elide: Text.ElideRight
-                                  font.family: root.fontFamily
-                                  font.pixelSize: Style.font.bodySmall
-                                  color: root.foreground
-                                }
-                              }
-                            }
-
-                            Rectangle {
-                              visible: card.selected
-                              anchors.fill: parent
-                              anchors.margins: -Style.space(3)
-                              radius: Style.space(6)
-                              color: "transparent"
-                              border.width: Math.max(1, Style.space(2))
-                              border.color: Style.focusStateColor(root.foreground, Commons.Color.accent)
-                            }
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
         }
       }
     }
+  }
   }
 }

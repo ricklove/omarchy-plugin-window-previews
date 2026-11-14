@@ -135,3 +135,89 @@ test("normalizeWorkspaceCount falls back and clamps to Hyprland's ten", () => {
   assert.equal(Model.normalizeWorkspaceCount(0), 1)
   assert.equal(Model.normalizeWorkspaceCount(99), 10)
 })
+
+
+test("each monitor gets its assigned block, independent of monitor id or order", () => {
+  const blocks = Model.parseWorkspaceBlocks("0\tDP-1\tSamsung\n1\tHDMI-A-2\tTCL\n")
+  const monitors = [
+    {...MONITOR, id: 7, name: "HDMI-A-2", activeWorkspace: {id: 11}},
+    {...MONITOR, id: 3, name: "DP-1", activeWorkspace: {id: 1}}
+  ]
+  const board = Model.buildBoard(monitors, [client({monitor: 7, workspace: {id: 11}})], 5, blocks)
+  assert.deepEqual(board[0].workspaces.map(w => w.id), [11,12,13,14,15])
+  assert.deepEqual(board[1].workspaces.map(w => w.id), [1,2,3,4,5])
+  assert.equal(board[0].workspaces[0].windows.length, 1)
+  assert.equal(board[0].workspaces[0].current, true)
+})
+
+test("block state wins when an empty active workspace is outside its usual range", () => {
+  const mon = {...MONITOR, name: "DP-1", activeWorkspace: {id: 21}}
+  const board = Model.buildBoard([mon], [], 5, {"DP-1": 0})
+  assert.deepEqual(board[0].workspaces.map(w => w.id), [1,2,3,4,5,21])
+  assert.equal(board[0].workspaces[5].current, true)
+})
+
+test("missing state falls back to the active workspace block", () => {
+  const mon = {...MONITOR, activeWorkspace: {id: 13}}
+  const board = Model.buildBoard([mon], [], 5, {})
+  assert.deepEqual(board[0].workspaces.map(w => w.id), [11,12,13,14,15])
+})
+
+test("block parser ignores malformed rows", () => {
+  assert.deepEqual(Model.parseWorkspaceBlocks("bad\tDP-1\tfoo\n-1\tDP-2\tbar\n0\tDP-3\tvalid\n"), {"DP-3": 0})
+})
+
+
+test("occupied-only mode keeps each monitor but omits empty tiles", () => {
+ const mons=[{...MONITOR,name:"DP-1",id:0,activeWorkspace:{id:1}},
+ {...MONITOR,name:"HDMI-A-2",id:1,activeWorkspace:{id:11}}]
+ const board=Model.buildBoard(mons,[client({monitor:1,workspace:{id:11}})],5,{"DP-1":0,"HDMI-A-2":1},true)
+ assert.equal(board.length,2)
+ assert.deepEqual(board[0].workspaces,[])
+ assert.deepEqual(board[1].workspaces.map(w=>w.id),[11])
+ assert.equal(Model.initialSelection(board).mon,1)
+ assert.equal(Model.initialSelection(Model.buildBoard(mons,[],5,{},true)),null)
+})
+
+
+test("spatial areas retain groups and collect overlapping free windows", () => {
+ const a={address:"a",groupKey:"a|b",front:true,rect:{x:0,y:0,w:.4,h:.4}}
+ const b={...a,address:"b",front:false}
+ const c={address:"c",groupKey:"",rect:{x:.5,y:.5,w:.3,h:.3}}
+ const d={address:"d",groupKey:"",rect:{x:.6,y:.6,w:.3,h:.3}}
+ const e={address:"e",groupKey:"",rect:{x:.1,y:.7,w:.2,h:.2}}
+ const areas=Model.spatialAreas({groups:[{members:[a,b]}],windows:[a,b,c,d,e]})
+ assert.equal(areas.length,3)
+ assert.deepEqual(areas[0].rect,a.rect)
+ assert.deepEqual(areas[0].members.map(w=>w.address),["a","b"])
+ assert.deepEqual(areas[1].members.map(w=>w.address),["c","d"])
+ assert.equal(areas[2].members[0].address,"e")
+ assert.deepEqual(c.rect,{x:.5,y:.5,w:.3,h:.3})
+})
+
+test("thumbnail grids fit all members and screen sizing uses both dimensions", () => {
+ for(const n of [1,2,3,4,9,17]) {
+  const columns=Model.thumbnailColumns(n,600,400,16/9)
+  assert.ok(columns>=1 && columns<=n)
+  assert.ok(Math.ceil(n/columns)*columns>=n)
+ }
+ for(const n of [1,2,5]) {
+  const w=Model.fitTileWidth(n,3760,1900,9/16,16)
+  assert.ok(w*n+16*(n-1)<=3760)
+  assert.ok(w*9/16<=1900)
+  if(n===1) assert.ok(w>3000)
+ }
+})
+
+
+test("arrow navigation crosses groups and free windows by thumbnail position", () => {
+ const a={address:"a",x:0,y:0,group:0}, b={address:"b",x:100,y:0,group:1},
+ c={address:"c",x:0,y:100,group:-1}, d={address:"d",x:100,y:100,group:0}
+ const items=[a,b,c,d]
+ assert.equal(Model.nextThumbnail(items,"a","right"),b)
+ assert.equal(Model.nextThumbnail(items,"b","down"),d)
+ assert.equal(Model.nextThumbnail(items,"d","left"),c)
+ assert.equal(Model.nextThumbnail(items,"c","up"),a)
+ assert.equal(Model.nextThumbnail(items,"a","left"),a)
+ assert.equal(Model.nextThumbnail([],"a","up"),null)
+})
