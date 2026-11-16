@@ -129,3 +129,18 @@ Status includes active capture count, retained image pixel dimensions and
 their raw pixel-byte total. That total excludes Qt object, GPU texture and
 small strip-surface overhead. Once the initial queue is complete, the inline
 feature should report zero active captures.
+
+## Tab reordering
+
+Plain left-button drag over the native bar or raised thumbnail arms reordering.
+Motion below six logical pixels remains an ordinary click. A destination outline
+appears during the drag; releasing over the same group's bar inserts the source
+at that index using Hyprland's public group methods. Releasing away cancels.
+The selected source stays active. Existing small snapshots are reused by address.
+
+The handler observes the native event bus and never cancels mouse events or
+replaces mouse bindings. Super, Alt, Ctrl and Shift bypass reordering; Caps/Num
+lock do not. Super + drag remains Hyprland's existing move/detach operation.
+Only an armed gesture adds motion processing; there is no idle polling or
+additional capture stream. Native status includes `reorderActive`, `reordered`
+and `superBypassed` for verification.

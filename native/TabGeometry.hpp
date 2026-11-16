@@ -12,6 +12,14 @@ struct Rect {
 };
 struct TabHit { int index; Rect rect; };
 
+// Caps/Num lock do not alter the gesture; every command modifier does.
+inline bool plainTabDrag(unsigned modifiers) {
+    return (modifiers & (1U | 4U | 8U | 64U)) == 0;
+}
+inline bool dragThresholdReached(double dx, double dy) {
+    return dx * dx + dy * dy >= 36;
+}
+
 inline Rect tabRect(Rect bar, int count, int index, bool stacked,
                     double innerGap, double outerGap, bool keepUpperGap) {
     if (count <= 0 || index < 0 || index >= count) return {};

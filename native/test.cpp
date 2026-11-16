@@ -3,6 +3,14 @@
 #include <iostream>
 using namespace OmaSpaces;
 int main() {
+    assert(plainTabDrag(0));
+    assert(plainTabDrag(2 | 16)); // Caps and Num lock
+    for (unsigned modifier : {1U, 4U, 8U, 64U}) assert(!plainTabDrag(modifier));
+    assert(!dragThresholdReached(5, 0));
+    assert(!dragThresholdReached(0, -5));
+    assert(dragThresholdReached(6, 0));
+    assert(dragThresholdReached(-6, 0));
+    assert(dragThresholdReached(5, 4));
     const Rect bar{1920, 20, 1000, 30};
     auto hit = [&](double x, double y) { return tabAt(bar, 3, false, 2, 2, true, x, y); };
     assert(!hit(1919, 30));

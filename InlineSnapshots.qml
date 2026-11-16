@@ -12,12 +12,14 @@ Item {
   id: root
   property bool nativeReady: false
   property var hoverController: null
+  property string dragTarget: ""
   property bool ready: false
   property var rows: []
   property var pendingRows: null
   property int pendingCount: 0
   property bool suspended: false
   property bool customLabels: false
+  property var savedSnapshots: ({})
   property var cells: []
   property var queue: []
   property var activeShot: null
@@ -37,6 +39,8 @@ Item {
     customLabels = false
     queue = []
     rows = []
+    savedSnapshots = ({})
+    dragTarget = ""
     pendingRows = null
   }
   Component.onCompleted: { ready = true; syncNative() }
@@ -49,6 +53,13 @@ Item {
   Connections {
     target: Hyprland
     function onRawEvent(event) {
+      if (event.name === "omaspacesdrag") {
+        var drag
+        try { drag = JSON.parse(String(event.data)) } catch (e) { return }
+        root.dragTarget = typeof drag.target === "string" ? drag.target : ""
+        if (root.hoverController) root.hoverController.cancelInline()
+        return
+      }
       if (event.name === "omaspaceslabels") { root.customLabels = String(event.data) === "custom"; return }
       if (event.name !== "omaspacestabs" || !root.enabled) return
       var text = String(event.data)
@@ -66,6 +77,15 @@ Item {
         if (root.pendingRows === null) return
         var rows = [], keys = Object.keys(root.pendingRows).sort()
         for (var i = 0; i < keys.length; i++) rows.push(root.pendingRows[keys[i]])
+        // Retain only tiny images belonging to currently visible tabs. Reordering
+        // delegates transfers these references instead of recapturing full windows.
+        var saved = ({})
+        for (var r = 0; r < rows.length; r++)
+          for (var t = 0; t < rows[r].tabs.length; t++) {
+            var address = rows[r].tabs[t].address
+            if (root.savedSnapshots[address]) saved[address] = root.savedSnapshots[address]
+          }
+        root.savedSnapshots = saved
         root.rows = rows
         root.suspended = false
         nextShot.restart()
@@ -106,7 +126,7 @@ Item {
   }
   function finish(cell, result, address) {
     if (!cell || activeShot !== cell || cell.address !== address) return
-    if (result) { cell.snapshot = result; completed++ }
+    if (result) { cell.snapshot = result; savedSnapshots[address] = result; completed++ }
     else failed++
     cell.wantsShot = false
     activeShot = null // Destroys the capture Loader and its full-size buffers.
@@ -180,14 +200,16 @@ Item {
           }
           function invalidate() {
             root.unregisterCell(cell)
-            snapshot = null
-            wantsShot = true
+            snapshot = root.savedSnapshots[address] || null
+            wantsShot = snapshot === null
             root.registerCell(cell)
           }
           onAddressChanged: if (cellReady) invalidate()
           onFrontChanged: if (cellReady && front) { wantsShot = true; root.request(cell) }
           onWindowSourceChanged: if (cellReady) root.request(cell)
           Component.onCompleted: {
+            snapshot = root.savedSnapshots[address] || null
+            wantsShot = snapshot === null
             cellReady = true
             raisedInput.regions.push(inputRegion)
             root.registerCell(cell)
@@ -204,6 +226,8 @@ Item {
           // Native text is temporarily transparent while these custom labels
           // are mapped. The strip itself has no painted background.
           color: "transparent"
+          border.width: root.dragTarget === cell.address ? 2 : 0
+          border.color: Commons.Color.accent
           Image {
             id: thumbnail
             x: 4
@@ -219,6 +243,16 @@ Item {
             y: thumbnail.y
             width: thumbnail.width
             height: Math.max(0, -thumbnail.y)
+            property real pressedX: 0
+            property real pressedY: 0
+            property bool moved: false
+            onPressed: function(mouse) {
+              if (mouse.modifiers & Qt.MetaModifier) { mouse.accepted = false; return }
+              pressedX = mouse.x; pressedY = mouse.y; moved = false
+            }
+            onPositionChanged: function(mouse) {
+              if (pressed && Math.pow(mouse.x-pressedX,2)+Math.pow(mouse.y-pressedY,2) >= 36) moved = true
+            }
             hoverEnabled: true
             acceptedButtons: Qt.LeftButton
             onEntered: {
@@ -229,6 +263,7 @@ Item {
             }
             onExited: if (root.hoverController) root.hoverController.cancelInline()
             onClicked: {
+              if (moved) return
               if (root.hoverController) root.hoverController.cancelInline()
               Hyprland.dispatch("hl.dsp.focus({ window = \"address:" + cell.address + "\" })")
             }

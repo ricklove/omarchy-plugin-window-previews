@@ -16,6 +16,10 @@ The images rise above the bar; their raised portion supports click-to-select
 and the same delayed live hover preview. Custom labels have a transparent
 background, with native title colors restored when the custom strip is absent.
 
+Plain left-drag a native tab (or its raised thumbnail) onto another tab to
+reorder the group. A small outline marks the destination; the order changes
+on release. Super + drag keeps Hyprland’s existing detach behavior.
+
 Swipe three fingers up: your workspaces spread out across the screen as live
 tiles, and any workspace holding a Hyprland *group* grows a column of that
 group's tabs underneath it, each tab with its own live thumbnail. Click a tile

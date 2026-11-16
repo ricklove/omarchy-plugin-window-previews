@@ -1,6 +1,7 @@
 #define WLR_USE_UNSTABLE
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
+#include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/Workspace.hpp>
 #include <hyprland/src/desktop/view/Group.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
@@ -64,7 +65,7 @@ class HoverDetector {
         // All config handles and listeners are allocated once, never per motion.
         listeners.push_back(Event::bus()->m_events.input.mouse.move.listen(
             [this](const Vector2D& pos, Event::SCallbackInfo&) { motion(pos); }));
-        listeners.push_back(Event::bus()->m_events.input.mouse.button.listen([this] { clear(); }));
+        listeners.push_back(Event::bus()->m_events.input.mouse.button.listen([this](const IPointer::SButtonEvent& e, Event::SCallbackInfo&) { reorderButton(e); clear(); }));
         listeners.push_back(Event::bus()->m_events.input.mouse.axis.listen([this] { clear(); }));
         listeners.push_back(Event::bus()->m_events.window.close.listen([this] { clear(); }));
         listeners.push_back(Event::bus()->m_events.workspace.active.listen([this] { clear(); }));
@@ -104,6 +105,7 @@ class HoverDetector {
     }
     ~HoverDetector() {
         listeners.clear();
+        cancelReorder();
         clear();
         setNativeTextHidden(false);
         g_pEventManager->postEvent({"omaspacestabs", "begin"});
@@ -133,6 +135,12 @@ class HoverDetector {
     bool customLabelsRequested = false, nativeTextHidden = false;
     std::vector<CBox> labelBars;
     Hit current;
+    Hit pressedTab;
+    WP<CGroup> pressedGroup;
+    Vector2D pressPosition;
+    bool reorderActive = false;
+    int reorderIndex = -1;
+    uint64_t reordered = 0, superBypassed = 0;
     bool snapshotsEnabled = false;
     bool tabsPaused = false;
     uint64_t tabsHash = 0;
@@ -151,7 +159,7 @@ class HoverDetector {
         return box;
     }
     Hit detect(const Vector2D& pos) const {
-        if (!enabled || !*groupbarEnabled || g_pInputManager->isLocked() ||
+        if (reorderActive || !enabled || !*groupbarEnabled || g_pInputManager->isLocked() ||
             g_pInputManager->isConstrained() || g_pInputManager->hasHeldButtons()) return {};
         // Most motion is nowhere near a tab. First test the handful of real
         // groupbar rectangles; only a possible hit pays for occlusion checks.
@@ -332,8 +340,88 @@ class HoverDetector {
         g_pEventManager->postEvent({"omaspacestabs", "end"});
         updateLabelVisibility();
     }
+    Hit pressHit(const Vector2D& pos) const {
+        auto hit = detect(pos);
+        if (hit.target) return hit;
+        // The raised image is a QML input surface above the native bar.
+        auto monitor = State::monitorState()->query().vec(pos).run();
+        if (!monitor) return {};
+        Vector2D local; PHLLS layer;
+        auto picker = Desktop::viewState()->hitTest();
+        if (!picker.layerSurfaceAt(pos, &monitor->m_layerSurfaceLayers[3], &local, &layer) ||
+            !layer || layer->m_namespace != "omarchy-omaspaces-tab-snapshots") return {};
+        for (const auto& tab : tabScratch) {
+            auto owner = tab.owner.lock(), target = tab.target.lock();
+            if (!owner || !target || !owner->m_group || tab.width <= 0 || tab.height <= 0) continue;
+            double content = std::max(1.0, tab.tab.h - double(*indicatorHeight));
+            double raise = std::min(36.0, std::max(0.0, tab.bar.y - monitor->m_position.y - monitor->m_reservedArea.top()));
+            double maxHeight = std::max(1.0, std::min({36.0, (content - 2) * 2, content + raise}));
+            double scale = std::min(std::max(1.0, std::min(60.0, tab.tab.w - 8)) / tab.width, maxHeight / tab.height);
+            OmaSpaces::Rect image{tab.tab.x + 4, tab.tab.y + content - std::round(tab.height * scale),
+                                 std::round(tab.width * scale), std::round(tab.height * scale)};
+            if (pos.y < tab.tab.y && image.contains(pos.x, pos.y)) return {owner, target, tab.tab};
+        }
+        return {};
+    }
+    void reorderHint(PHLWINDOW target) {
+        Json data; data.add("source", address(pressedTab.target.lock())); data.add("target", address(target));
+        g_pEventManager->postEvent({"omaspacesdrag", data.dump()});
+    }
+    void cancelReorder() {
+        if (reorderActive) g_pEventManager->postEvent({"omaspacesdrag", "{}"});
+        pressedTab = {}; pressedGroup.reset(); reorderActive = false; reorderIndex = -1;
+    }
+    void reorderMotion(const Vector2D& pos) {
+        if (!pressedTab.target) return;
+        auto group = pressedGroup.lock(); auto target = pressedTab.target.lock();
+        if (!enabled || !OmaSpaces::plainTabDrag(g_pInputManager->getModsFromAllKBs()) || !group || !target || target->m_group != group ||
+            g_layoutManager->dragController()->target() || g_pInputManager->isLocked()) { cancelReorder(); return; }
+        auto delta = pos - pressPosition;
+        if (!reorderActive && !OmaSpaces::dragThresholdReached(delta.x, delta.y)) return;
+        bool first = !reorderActive;
+        reorderActive = true;
+        clear();
+        auto owner = group->current(); auto box = groupBarBox(owner);
+        int index = -1;
+        if (box && pos.x >= box->x && pos.x < box->x + box->w && pos.y >= box->y - 64 && pos.y < box->y + box->h + 64) {
+            for (size_t i = 0; i < group->size(); ++i) {
+                auto rect = OmaSpaces::tabRect({box->x,box->y,box->w,box->h}, int(group->size()), int(i),
+                    bool(*stacked), double(*innerGap), double(*outerGap), bool(*keepUpperGap));
+                if ((*stacked ? pos.y >= rect.y && pos.y < rect.y + rect.h : pos.x >= rect.x && pos.x < rect.x + rect.w)) { index = int(i); break; }
+            }
+        }
+        if (first || index != reorderIndex) { reorderIndex = index; reorderHint(index >= 0 ? group->fromIndex(size_t(index)) : nullptr); }
+    }
+    void reorderButton(const IPointer::SButtonEvent& event) {
+        if (event.button != 272) { cancelReorder(); return; }
+        if (event.state == WL_POINTER_BUTTON_STATE_PRESSED) {
+            cancelReorder();
+            auto mods = g_pInputManager->getModsFromAllKBs();
+            if (mods & 64U) ++superBypassed;
+            if (!enabled || !OmaSpaces::plainTabDrag(mods)) return; // Never cancel/consume Super + drag.
+            auto hit = pressHit(Pointer::mgr()->position());
+            auto target = hit.target.lock();
+            if (!target || !target->m_group || target->m_group->size() < 2) return;
+            pressedTab = hit; pressedGroup = target->m_group; pressPosition = Pointer::mgr()->position();
+            return;
+        }
+        reorderMotion(Pointer::mgr()->position());
+        auto group = pressedGroup.lock(); auto target = pressedTab.target.lock();
+        int destination = reorderIndex;
+        bool apply = reorderActive && destination >= 0 && group && target && target->m_group == group &&
+                     OmaSpaces::plainTabDrag(g_pInputManager->getModsFromAllKBs());
+        cancelReorder();
+        if (!apply) return;
+        group->setCurrent(target);
+        while (int(group->getCurrentIdx()) < destination) group->swapWithNext();
+        while (int(group->getCurrentIdx()) > destination) group->swapWithLast();
+        Desktop::focusState()->fullWindowFocus(target, Desktop::FOCUS_REASON_CLICK);
+        ++reordered;
+        syncTabs(true);
+    }
     void motion(const Vector2D& pos) {
         ++motions;
+        reorderMotion(pos);
         if (!profiling) { update(pos); return; }
         const auto start = Clock::now();
         update(pos);
@@ -413,6 +501,7 @@ class HoverDetector {
             return payload(detect({x, y})).dump();
         } else if (!action.empty() && action != "status") return "error: unknown omaspaceshover action";
         Json result;
+        result.add("reorderActive", reorderActive); result.add("reordered", reordered); result.add("superBypassed", superBypassed);
         result.add("enabled", enabled); result.add("pending", bool(current.target) && !published);
         result.add("published", published); result.add("address", address(current.target.lock()));
         result.add("snapshotsEnabled", snapshotsEnabled); result.add("visibleTabs", uint64_t(visibleTabCount));
@@ -432,6 +521,6 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (std::string(__hyprland_api_get_hash()) != __hyprland_api_get_client_hash())
         throw std::runtime_error("omaspaces-hover: rebuild against the running Hyprland version");
     detector = std::make_unique<HoverDetector>(handle);
-    return {"omaspaces-hover", "Group tab hover and still-thumbnail bridge for OmaSpaces", "Rick / OmaSpaces", "0.2.0"};
+    return {"omaspaces-hover", "Group tab hover and still-thumbnail bridge for OmaSpaces", "Rick / OmaSpaces", "0.3.0"};
 }
 APICALL EXPORT void PLUGIN_EXIT() { detector.reset(); }
