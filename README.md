@@ -4,11 +4,6 @@ A fork of [OmaSpaces](https://github.com/TerrifiedBug/omaspaces), extending its
 workspace overview with spatial window grids, group-tab snapshots, live hover
 previews, and mouse drag reordering.
 
-Repository: [ricklove/omarchy-plugin-window-previews](https://github.com/ricklove/omarchy-plugin-window-previews).
-Plugin ID: `io.github.ricklove.window-previews`. The shell entry, settings,
-keybindings and installed directory use this ID. The native bridge and diagnostic
-commands use the Window Previews names below.
-
 ![Group tabs with tiny snapshots and a larger live preview on hover](docs/images/group-tab-previews.png)
 
 ## Features
