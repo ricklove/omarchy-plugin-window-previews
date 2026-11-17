@@ -1,5 +1,4 @@
 import QtQuick
-import QtQuick.Shapes
 import Quickshell
 import Quickshell.Hyprland
 import Quickshell.Io
@@ -225,37 +224,14 @@ Item {
           width: tab ? Math.max(1, tab.tab.w) : 1
           height: tab ? Math.max(1, tab.tab.h - tab.indicator) : 1
           // Native text is temporarily transparent while these custom labels
-          // are mapped. Cover native tab fills with a neutral theme surface so
-          // only the front tab's shape carries the accent, just like its title.
-          color: Commons.Color.menu.background
+          // are mapped. Preserve native tab backgrounds and tint only the front tab.
+          color: "transparent"
           border.width: root.dragTarget === cell.address ? 2 : 0
           border.color: Commons.Color.accent
-          Shape {
-            id: activeTab
+          Rectangle {
             anchors.fill: parent
             visible: cell.front
-            readonly property real curve: Math.max(0, Math.min(8, (width - 2) / 4, (height - 2) / 3))
-            // An open bottom joins the curved shoulders to the native group bar.
-            // Filling the open path closes its base without drawing a bottom edge.
-            ShapePath {
-              strokeColor: Commons.Color.accent
-              strokeWidth: 1.5
-              fillColor: Util.alpha(Commons.Color.accent, 0.18)
-              capStyle: ShapePath.RoundCap
-              PathSvg {
-                path: {
-                  var w = activeTab.width, h = activeTab.height, r = activeTab.curve
-                  return "M 1 " + (h - 1)
-                    + " Q " + (r + 1) + " " + (h - 1) + " " + (r + 1) + " " + (h - r - 1)
-                    + " L " + (r + 1) + " " + (r + 1)
-                    + " Q " + (r + 1) + " 1 " + (2 * r + 1) + " 1"
-                    + " L " + (w - 2 * r - 1) + " 1"
-                    + " Q " + (w - r - 1) + " 1 " + (w - r - 1) + " " + (r + 1)
-                    + " L " + (w - r - 1) + " " + (h - r - 1)
-                    + " Q " + (w - r - 1) + " " + (h - 1) + " " + (w - 1) + " " + (h - 1)
-                }
-              }
-            }
+            color: Util.alpha(Commons.Color.accent, 0.18)
           }
           Image {
             id: thumbnail
