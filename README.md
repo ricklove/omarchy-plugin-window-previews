@@ -9,6 +9,8 @@ Plugin ID: `io.github.ricklove.window-previews`. The shell entry, settings,
 keybindings and installed directory use this ID. The native bridge and diagnostic
 commands use the Window Previews names below.
 
+![Group tabs with tiny snapshots and a larger live preview on hover](docs/images/group-tab-previews.png)
+
 ## Features
 
 - A separate overview on each monitor, showing only its occupied workspaces.
