@@ -81,11 +81,6 @@ For the one-time migration, log out and back in when convenient after installing
 a shell restart alone does not clear that old gesture. You can use the new
 keybinding in the meantime. No automatic compositor reload is performed.
 
-For a development checkout under `Projects`, a directory symlink from the normal
-installed path lets the shell load source there. The parent
-[omarchy-rick](https://github.com/ricklove/omarchy-rick) repository documents that
-setup. `omarchy plugin add file://...` clones the source instead of linking it.
-
 The existing service loads the native bridge at shell startup. No new daemon,
 privileged installation or Hyprland config reload is needed. QML dependency
 changes may require `omarchy restart shell` to replace cached components.
