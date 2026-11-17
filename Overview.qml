@@ -41,7 +41,7 @@ Item {
     return root.previews.filter(function(p) { return !!p }).map(function(p) { return p.navigationInfo() })
   }
   IpcHandler {
-    target: "omaspaces-overview-debug"
+    target: "window-previews-overview-debug"
     function status(): string {
       return JSON.stringify({opened: root.opened, selectedAddress: root.selectedAddress,
         surfaces: root.surfaceStates(),
@@ -52,7 +52,7 @@ Item {
   // Held between dismiss() and the dispatch that follows it; see activate().
   property var pendingTarget: null
 
-  readonly property string manifestId: manifest && manifest.id ? manifest.id : "io.github.terrifiedbug.omaspaces"
+  readonly property string manifestId: manifest && manifest.id ? manifest.id : "io.github.ricklove.window-previews"
 
   // Overlays are not handed their inline settings (shell.qml only assigns
   // omarchyPath/shell/manifest/registries/service), so read the plugins[]
@@ -382,7 +382,7 @@ Item {
         var levels = monitorLayers && monitorLayers.levels ? monitorLayers.levels : {}
         Object.keys(levels).forEach(function(level) {
           levels[level].forEach(function(surface) {
-            if (surface.namespace === "omarchy-omaspaces" && surface.w > 0 && surface.h > 0)
+            if (surface.namespace === "omarchy-window-previews" && surface.w > 0 && surface.h > 0)
               alpha = Math.max(alpha, Number(surface.alpha))
           })
         })
@@ -431,7 +431,7 @@ Item {
     screen: modelData
     anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
-    WlrLayershell.namespace: "omarchy-omaspaces"
+    WlrLayershell.namespace: "omarchy-window-previews"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: ownsKeyboard ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore

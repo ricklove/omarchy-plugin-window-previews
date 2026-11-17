@@ -2,7 +2,7 @@
 #include <cmath>
 #include <optional>
 
-namespace OmaSpaces {
+namespace WindowPreviews {
 struct Rect {
     double x = 0, y = 0, w = 0, h = 0;
     bool contains(double px, double py) const {
@@ -48,4 +48,4 @@ inline std::optional<TabHit> tabAt(Rect bar, int count, bool stacked,
     if (!rect.contains(px, py)) return {};
     return TabHit{index, rect};
 }
-} // namespace OmaSpaces
+} // namespace WindowPreviews

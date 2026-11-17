@@ -2,7 +2,7 @@ CXX ?= c++
 CPPFLAGS += $(shell pkg-config --cflags hyprland pixman-1 libinput wayland-server json-c)
 CXXFLAGS ?= -O2
 CXXFLAGS += -std=c++23 -fPIC -fno-gnu-unique -Wall -Wextra -Wno-unused-parameter
-TARGET = build/omaspaces-hover.so
+TARGET = build/window-previews-hover.so
 
 .PHONY: all check clean
 all: $(TARGET)

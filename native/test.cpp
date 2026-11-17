@@ -1,7 +1,7 @@
 #include "TabGeometry.hpp"
 #include <cassert>
 #include <iostream>
-using namespace OmaSpaces;
+using namespace WindowPreviews;
 int main() {
     assert(plainTabDrag(0));
     assert(plainTabDrag(2 | 16)); // Caps and Num lock

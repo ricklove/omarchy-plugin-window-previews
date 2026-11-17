@@ -29,7 +29,7 @@ Item {
   property bool registered: false
   property int attempts: 0
 
-  readonly property string manifestId: manifest && manifest.id ? manifest.id : "io.github.terrifiedbug.omaspaces"
+  readonly property string manifestId: manifest && manifest.id ? manifest.id : "io.github.ricklove.window-previews"
 
   // Services are not handed their inline settings either; read shell.json the
   // same way the overlay does.
@@ -57,10 +57,10 @@ Item {
   // means a call that throws still leaves the guard behind, and every later
   // attempt then reports "present" for a gesture that was never registered.
   readonly property string gestureLua:
-    "if not _G.__omaspaces_gesture then " +
+    "if not _G.__window_previews_gesture then " +
     "hl.gesture({ fingers = 3, direction = \"up\", action = function() " +
     "hl.dispatch(hl.dsp.exec_raw([[omarchy-shell shell toggle " + manifestId + " '{}']])) end }) " +
-    "_G.__omaspaces_gesture = true " +
+    "_G.__window_previews_gesture = true " +
     "return \"registered\" end return \"present\""
 
   function setting(name, fallback) {
@@ -108,12 +108,12 @@ Item {
     interval: 3000
     running: root.gestureEnabled
 
-    onTriggered: if (!root.luaReady) console.warn("omaspaces: Hyprland is not running the Lua config; swipe-up not registered, bind it yourself (README)")
+    onTriggered: if (!root.luaReady) console.warn("window-previews: Hyprland is not running the Lua config; swipe-up not registered, bind it yourself (README)")
   }
 
   Process {
     id: registerProc
-    command: ["hyprctl", "repl", (root.reregister ? "_G.__omaspaces_gesture = nil " : "") + root.gestureLua]
+    command: ["hyprctl", "repl", (root.reregister ? "_G.__window_previews_gesture = nil " : "") + root.gestureLua]
 
     stdout: StdioCollector {
       waitForEnd: true
@@ -123,7 +123,7 @@ Item {
         root.reregister = false
         root.attempts = root.attempts + 1
         root.registered = out === "registered" || out === "present"
-        if (!root.registered) console.warn("omaspaces: gesture registration failed:", out)
+        if (!root.registered) console.warn("window-previews: gesture registration failed:", out)
       }
     }
   }
@@ -154,7 +154,7 @@ Item {
   }
 
   IpcHandler {
-    target: "omaspaces"
+    target: "window-previews"
 
     function ping(): string {
       return "ok"

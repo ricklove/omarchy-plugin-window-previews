@@ -47,13 +47,13 @@ constexpr int HOVER_DELAY_MS = 250;
 struct TabRecord {
     PHLWINDOWREF owner, target;
     uintptr_t group;
-    OmaSpaces::Rect bar, tab;
+    WindowPreviews::Rect bar, tab;
     double width, height;
     bool front;
 };
 struct Hit {
     PHLWINDOWREF owner, target;
-    OmaSpaces::Rect tab;
+    WindowPreviews::Rect tab;
     bool same(const Hit& other) const {
         return owner == other.owner && target == other.target && tab == other.tab;
     }
@@ -82,8 +82,8 @@ class HoverDetector {
         }));
         listeners.push_back(g_pSessionLockManager->m_events.lock.listen([this] { clear(); }));
         listeners.push_back(Event::bus()->m_events.layer.opened.listen([this](PHLLS layer) {
-            if (layer->m_namespace != "omarchy-omaspaces-tab-preview" &&
-                layer->m_namespace != "omarchy-omaspaces-tab-snapshots") clear();
+            if (layer->m_namespace != "omarchy-window-previews-tab-preview" &&
+                layer->m_namespace != "omarchy-window-previews-tab-snapshots") clear();
         }));
         // Only while dwelling/showing: catch moved/resized/reordered groups even
         // when the pointer is stationary. No render work is requested here.
@@ -93,14 +93,14 @@ class HoverDetector {
             syncTabs(false);
         }));
         command = HyprlandAPI::registerHyprCtlCommand(handle, SHyprCtlCommand{
-            .name = "omaspaceshover", .exact = false,
+            .name = "windowpreviews", .exact = false,
             .fn = [this](eHyprCtlOutputFormat, std::string request) { return control(request); }});
-        if (!command) throw std::runtime_error("omaspaces-hover: command registration failed");
+        if (!command) throw std::runtime_error("window-previews-hover: command registration failed");
         dwellTimer = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop,
             [](void* data) { static_cast<HoverDetector*>(data)->publish(); return 0; }, this);
         if (!dwellTimer) {
             HyprlandAPI::unregisterHyprCtlCommand(handle, command);
-            throw std::runtime_error("omaspaces-hover: timer allocation failed");
+            throw std::runtime_error("window-previews-hover: timer allocation failed");
         }
     }
     ~HoverDetector() {
@@ -108,8 +108,8 @@ class HoverDetector {
         cancelReorder();
         clear();
         setNativeTextHidden(false);
-        g_pEventManager->postEvent({"omaspacestabs", "begin"});
-        g_pEventManager->postEvent({"omaspacestabs", "end"});
+        g_pEventManager->postEvent({"windowpreviewstabs", "begin"});
+        g_pEventManager->postEvent({"windowpreviewstabs", "end"});
         if (dwellTimer) wl_event_source_remove(dwellTimer);
         if (command) HyprlandAPI::unregisterHyprCtlCommand(handle, command);
     }
@@ -191,7 +191,7 @@ class HoverDetector {
         if (count == 0 || (*disableOnly && count == 1)) return {};
         const auto box = groupBarBox(owner);
         if (!box) return {};
-        auto tab = OmaSpaces::tabAt({box->x, box->y, box->w, box->h}, int(count), bool(*stacked),
+        auto tab = WindowPreviews::tabAt({box->x, box->y, box->w, box->h}, int(count), bool(*stacked),
                                    double(*innerGap), double(*outerGap), bool(*keepUpperGap), pos.x, pos.y);
         if (!tab) return {};
         auto target = owner->m_group->fromIndex(tab->index);
@@ -206,7 +206,7 @@ class HoverDetector {
             else if (*value == 0) *value = originalTextColors[i];
         }
         nativeTextHidden = hide;
-        g_pEventManager->postEvent({"omaspaceslabels", hide ? "custom" : "native"});
+        g_pEventManager->postEvent({"windowpreviewslabels", hide ? "custom" : "native"});
         // Title textures are rebuilt by the native groupbar on its next draw.
         for (const auto& weak : Desktop::View::groups()) {
             auto group = weak.lock();
@@ -220,7 +220,7 @@ class HoverDetector {
             if (!ready) break;
             bool found = false;
             for (const auto& layer : Desktop::layerState()->layers()) {
-                if (layer->m_namespace != "omarchy-omaspaces-tab-snapshots" || !layer->aliveAndVisible() ||
+                if (layer->m_namespace != "omarchy-window-previews-tab-snapshots" || !layer->aliveAndVisible() ||
                     layer->alpha().value() < 0.9f) continue;
                 auto surface = layer->wlSurface() ? layer->wlSurface()->resource() : nullptr;
                 if (!surface || !surface->m_current.texture) continue;
@@ -238,7 +238,7 @@ class HoverDetector {
     static void hashRect(uint64_t& hash, const CBox& box) {
         for (double value : {box.x, box.y, box.w, box.h}) hashMix(hash, uint64_t(int64_t(std::round(value))));
     }
-    bool exposed(PHLWINDOW owner, const OmaSpaces::Rect& rect) const {
+    bool exposed(PHLWINDOW owner, const WindowPreviews::Rect& rect) const {
         const auto mon = owner->m_monitor.lock();
         if (!mon || rect.w < 4 || rect.h < 4) return false;
         const auto picker = Desktop::viewState()->hitTest();
@@ -261,7 +261,7 @@ class HoverDetector {
         // The strip is an external surface, so hide it during native drags
         // instead of allowing an IPC-updated thumbnail to trail the window.
         if (g_layoutManager->dragController()->target()) {
-            if (!tabsPaused) g_pEventManager->postEvent({"omaspacestabs", "paused"});
+            if (!tabsPaused) g_pEventManager->postEvent({"windowpreviewstabs", "paused"});
             tabsPaused = true;
             setNativeTextHidden(false);
             return;
@@ -289,7 +289,7 @@ class HoverDetector {
                 for (size_t i = 0; i < group->size() && tabScratch.size() < 128; ++i) {
                     auto target = group->fromIndex(i);
                     if (!target || !target->m_isMapped) continue;
-                    auto rect = OmaSpaces::tabRect({box->x, box->y, box->w, box->h}, int(group->size()), int(i),
+                    auto rect = WindowPreviews::tabRect({box->x, box->y, box->w, box->h}, int(group->size()), int(i),
                         bool(*stacked), double(*innerGap), double(*outerGap), bool(*keepUpperGap));
                     auto size = target->size(IGeometric::GEOMETRIC_CURRENT);
                     tabScratch.push_back({owner, target, key, {box->x, box->y, box->w, box->h}, rect, size.x, size.y, target == owner});
@@ -305,7 +305,7 @@ class HoverDetector {
             hashRect(hash, window->getFullWindowBoundingBox());
         }
         for (const auto& layer : Desktop::layerState()->layers()) {
-            if (!layer->aliveAndVisible() || layer->m_namespace == "omarchy-omaspaces-tab-snapshots") continue;
+            if (!layer->aliveAndVisible() || layer->m_namespace == "omarchy-window-previews-tab-snapshots") continue;
             hashMix(hash, reinterpret_cast<uintptr_t>(layer.get()));
             hashRect(hash, layer->m_geometry);
         }
@@ -316,7 +316,7 @@ class HoverDetector {
         labelBars.clear();
         std::vector<uintptr_t> labelGroups;
         // Each packet is small enough for Hyprland's 1024-byte IPC limit.
-        g_pEventManager->postEvent({"omaspacestabs", "begin"});
+        g_pEventManager->postEvent({"windowpreviewstabs", "begin"});
         for (const auto& tab : tabScratch) {
             auto owner = tab.owner.lock(), target = tab.target.lock();
             if (!owner || !target || !exposed(owner, tab.tab)) continue;
@@ -335,9 +335,9 @@ class HoverDetector {
             // QML reads the live title directly, avoiding long titles in IPC.
             data.add("title", "");
             ++visibleTabCount;
-            g_pEventManager->postEvent({"omaspacestabs", data.dump()});
+            g_pEventManager->postEvent({"windowpreviewstabs", data.dump()});
         }
-        g_pEventManager->postEvent({"omaspacestabs", "end"});
+        g_pEventManager->postEvent({"windowpreviewstabs", "end"});
         updateLabelVisibility();
     }
     Hit pressHit(const Vector2D& pos) const {
@@ -349,7 +349,7 @@ class HoverDetector {
         Vector2D local; PHLLS layer;
         auto picker = Desktop::viewState()->hitTest();
         if (!picker.layerSurfaceAt(pos, &monitor->m_layerSurfaceLayers[3], &local, &layer) ||
-            !layer || layer->m_namespace != "omarchy-omaspaces-tab-snapshots") return {};
+            !layer || layer->m_namespace != "omarchy-window-previews-tab-snapshots") return {};
         for (const auto& tab : tabScratch) {
             auto owner = tab.owner.lock(), target = tab.target.lock();
             if (!owner || !target || !owner->m_group || tab.width <= 0 || tab.height <= 0) continue;
@@ -357,7 +357,7 @@ class HoverDetector {
             double raise = std::min(36.0, std::max(0.0, tab.bar.y - monitor->m_position.y - monitor->m_reservedArea.top()));
             double maxHeight = std::max(1.0, std::min({36.0, (content - 2) * 2, content + raise}));
             double scale = std::min(std::max(1.0, std::min(60.0, tab.tab.w - 8)) / tab.width, maxHeight / tab.height);
-            OmaSpaces::Rect image{tab.tab.x + 4, tab.tab.y + content - std::round(tab.height * scale),
+            WindowPreviews::Rect image{tab.tab.x + 4, tab.tab.y + content - std::round(tab.height * scale),
                                  std::round(tab.width * scale), std::round(tab.height * scale)};
             if (pos.y < tab.tab.y && image.contains(pos.x, pos.y)) return {owner, target, tab.tab};
         }
@@ -365,19 +365,19 @@ class HoverDetector {
     }
     void reorderHint(PHLWINDOW target) {
         Json data; data.add("source", address(pressedTab.target.lock())); data.add("target", address(target));
-        g_pEventManager->postEvent({"omaspacesdrag", data.dump()});
+        g_pEventManager->postEvent({"windowpreviewsdrag", data.dump()});
     }
     void cancelReorder() {
-        if (reorderActive) g_pEventManager->postEvent({"omaspacesdrag", "{}"});
+        if (reorderActive) g_pEventManager->postEvent({"windowpreviewsdrag", "{}"});
         pressedTab = {}; pressedGroup.reset(); reorderActive = false; reorderIndex = -1;
     }
     void reorderMotion(const Vector2D& pos) {
         if (!pressedTab.target) return;
         auto group = pressedGroup.lock(); auto target = pressedTab.target.lock();
-        if (!enabled || !OmaSpaces::plainTabDrag(g_pInputManager->getModsFromAllKBs()) || !group || !target || target->m_group != group ||
+        if (!enabled || !WindowPreviews::plainTabDrag(g_pInputManager->getModsFromAllKBs()) || !group || !target || target->m_group != group ||
             g_layoutManager->dragController()->target() || g_pInputManager->isLocked()) { cancelReorder(); return; }
         auto delta = pos - pressPosition;
-        if (!reorderActive && !OmaSpaces::dragThresholdReached(delta.x, delta.y)) return;
+        if (!reorderActive && !WindowPreviews::dragThresholdReached(delta.x, delta.y)) return;
         bool first = !reorderActive;
         reorderActive = true;
         clear();
@@ -385,7 +385,7 @@ class HoverDetector {
         int index = -1;
         if (box && pos.x >= box->x && pos.x < box->x + box->w && pos.y >= box->y - 64 && pos.y < box->y + box->h + 64) {
             for (size_t i = 0; i < group->size(); ++i) {
-                auto rect = OmaSpaces::tabRect({box->x,box->y,box->w,box->h}, int(group->size()), int(i),
+                auto rect = WindowPreviews::tabRect({box->x,box->y,box->w,box->h}, int(group->size()), int(i),
                     bool(*stacked), double(*innerGap), double(*outerGap), bool(*keepUpperGap));
                 if ((*stacked ? pos.y >= rect.y && pos.y < rect.y + rect.h : pos.x >= rect.x && pos.x < rect.x + rect.w)) { index = int(i); break; }
             }
@@ -398,7 +398,7 @@ class HoverDetector {
             cancelReorder();
             auto mods = g_pInputManager->getModsFromAllKBs();
             if (mods & 64U) ++superBypassed;
-            if (!enabled || !OmaSpaces::plainTabDrag(mods)) return; // Never cancel/consume Super + drag.
+            if (!enabled || !WindowPreviews::plainTabDrag(mods)) return; // Never cancel/consume Super + drag.
             auto hit = pressHit(Pointer::mgr()->position());
             auto target = hit.target.lock();
             if (!target || !target->m_group || target->m_group->size() < 2) return;
@@ -409,7 +409,7 @@ class HoverDetector {
         auto group = pressedGroup.lock(); auto target = pressedTab.target.lock();
         int destination = reorderIndex;
         bool apply = reorderActive && destination >= 0 && group && target && target->m_group == group &&
-                     OmaSpaces::plainTabDrag(g_pInputManager->getModsFromAllKBs());
+                     WindowPreviews::plainTabDrag(g_pInputManager->getModsFromAllKBs());
         cancelReorder();
         if (!apply) return;
         group->setCurrent(target);
@@ -472,7 +472,7 @@ class HoverDetector {
         ++messages;
         // Hyprland's existing nonblocking event socket; no process or socket
         // connection is created in the input handler.
-        g_pEventManager->postEvent({"omaspaceshover", data});
+        g_pEventManager->postEvent({"windowpreviews", data});
     }
     std::string control(const std::string& request) {
         std::istringstream args(request);
@@ -482,13 +482,13 @@ class HoverDetector {
             customLabelsRequested = action == "tabs-labels";
             if (!customLabelsRequested) setNativeTextHidden(false);
             snapshotsEnabled = true; syncTabs(true);
-            g_pEventManager->postEvent({"omaspaceslabels", nativeTextHidden ? "custom" : "native"});
+            g_pEventManager->postEvent({"windowpreviewslabels", nativeTextHidden ? "custom" : "native"});
         }
         else if (action == "snapshots-off") {
             snapshotsEnabled = false; visibleTabCount = 0; tabsHash = 0;
             customLabelsRequested = false; labelBars.clear(); setNativeTextHidden(false);
-            g_pEventManager->postEvent({"omaspacestabs", "begin"});
-            g_pEventManager->postEvent({"omaspacestabs", "end"});
+            g_pEventManager->postEvent({"windowpreviewstabs", "begin"});
+            g_pEventManager->postEvent({"windowpreviewstabs", "end"});
         }
         else if (action == "enable") { enabled = true; clear(); }
         else if (action == "disable") { enabled = false; clear(); }
@@ -499,7 +499,7 @@ class HoverDetector {
             double x, y;
             if (!(args >> x >> y) || !std::isfinite(x) || !std::isfinite(y)) return "error: expected probe x y";
             return payload(detect({x, y})).dump();
-        } else if (!action.empty() && action != "status") return "error: unknown omaspaceshover action";
+        } else if (!action.empty() && action != "status") return "error: unknown windowpreviews action";
         Json result;
         result.add("reorderActive", reorderActive); result.add("reordered", reordered); result.add("superBypassed", superBypassed);
         result.add("enabled", enabled); result.add("pending", bool(current.target) && !published);
@@ -519,8 +519,8 @@ std::unique_ptr<HoverDetector> detector;
 APICALL EXPORT std::string PLUGIN_API_VERSION() { return HYPRLAND_API_VERSION; }
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (std::string(__hyprland_api_get_hash()) != __hyprland_api_get_client_hash())
-        throw std::runtime_error("omaspaces-hover: rebuild against the running Hyprland version");
+        throw std::runtime_error("window-previews-hover: rebuild against the running Hyprland version");
     detector = std::make_unique<HoverDetector>(handle);
-    return {"omaspaces-hover", "Group tab hover and still-thumbnail bridge for OmaSpaces", "Rick / OmaSpaces", "0.3.0"};
+    return {"window-previews-hover", "Group tab hover and still-thumbnail bridge for Window Previews", "Rick Love", "0.4.0"};
 }
 APICALL EXPORT void PLUGIN_EXIT() { detector.reset(); }

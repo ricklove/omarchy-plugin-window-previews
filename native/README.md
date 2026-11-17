@@ -1,7 +1,8 @@
 # Group-tab hover bridge
 
-This small C++ Hyprland plugin belongs to the same repository as the OmaSpaces
-overview. It only detects native tab hover; QML owns all preview rendering.
+This small C++ Hyprland plugin belongs to the same repository as the Window Previews
+overview. It detects native tab hover, publishes tab geometry and handles plain-drag
+reordering; QML owns all preview rendering.
 
 ## Build and load
 
@@ -27,7 +28,7 @@ sh native/load.sh
 
 The build replaces the binary atomically, so it never truncates a loaded ELF.
 The compiled files in `native/build/` are ignored by Git.
-The loader uses a content-addressed copy in `$XDG_RUNTIME_DIR/omaspaces-native/`
+The loader uses a content-addressed copy in `$XDG_RUNTIME_DIR/window-previews-native/`
 and records its path there. This avoids loading stale code from the dynamic
 linker's module cache. Native builds disable GNU-unique symbols to permit
 clean unloading; `unload.sh` uses the recorded runtime path.
@@ -62,16 +63,16 @@ overall process RSS/VRAM need not return to the exact startup value.
 
 ## Settings and diagnostics
 
-Set `"tabPreviews": false` on the OmaSpaces entry in `shell.json` to disable
+Set `"tabPreviews": false` on the Window Previews entry in `shell.json` to disable
 the feature. Native detection is disabled and the popup is destroyed.
 
 ```sh
-hyprctl omaspaceshover status
-omarchy-shell omaspaces-hover-debug status
-hyprctl omaspaceshover probe 2200 100  # read-only hit test at global coordinates
-hyprctl omaspaceshover profile       # opt-in timing of subsequent mouse events
-hyprctl omaspaceshover status
-hyprctl omaspaceshover unprofile
+hyprctl windowpreviews status
+omarchy-shell window-previews-hover-debug status
+hyprctl windowpreviews probe 2200 100  # read-only hit test at global coordinates
+hyprctl windowpreviews profile       # opt-in timing of subsequent mouse events
+hyprctl windowpreviews status
+hyprctl windowpreviews unprofile
 ```
 
 Profiling is off normally. The status reports motion/message counts, pending
@@ -122,7 +123,7 @@ preview. `tabPreviews: false` disables both. The service initializes the native
 geometry subscription automatically after loading the detector.
 
 ```sh
-omarchy-shell omaspaces-snapshots-debug status
+omarchy-shell window-previews-snapshots-debug status
 ```
 
 Status includes active capture count, retained image pixel dimensions and

@@ -1,13 +1,19 @@
 {
   "schemaVersion": 1,
-  "id": "io.github.terrifiedbug.omaspaces",
-  "name": "OmaSpaces",
-  "version": "0.1.0",
-  "author": "TerrifiedBug",
+  "id": "io.github.ricklove.window-previews",
+  "name": "Window Previews",
+  "version": "0.4.0",
+  "author": "Rick Love; based on OmaSpaces by TerrifiedBug",
   "license": "MIT",
-  "description": "Mission-Control-style overview: workspaces across, grouped tabs down, live thumbnails, opened by a three-finger swipe up.",
-  "homepage": "https://github.com/TerrifiedBug/omaspaces",
-  "kinds": ["overlay", "service"],
+  "description": "Spatial workspace overview, live group-tab hover previews, tiny tab snapshots and mouse drag reordering for Omarchy.",
+  "homepage": "https://github.com/ricklove/omarchy-plugin-window-previews",
+  "kinds": [
+    "overlay",
+    "service"
+  ],
   "keepLoaded": true,
-  "entryPoints": { "overlay": "Overview.qml", "service": "Service.qml" }
+  "entryPoints": {
+    "overlay": "Overview.qml",
+    "service": "Service.qml"
+  }
 }

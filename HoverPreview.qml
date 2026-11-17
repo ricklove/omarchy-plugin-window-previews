@@ -71,17 +71,17 @@ Item {
     command: ["sh", Qt.resolvedUrl("native/load.sh").toString().replace(/^file:\/\//, "")]
     onExited: function(exitCode, exitStatus) {
       root.nativeLoaded = exitCode === 0
-      if (exitCode !== 0) console.warn("omaspaces: native hover detector could not load; see native/README.md")
+      if (exitCode !== 0) console.warn("window-previews: native hover detector could not load; see native/README.md")
     }
   }
   Process {
     id: disableNative
-    command: ["hyprctl", "omaspaceshover", "disable"]
+    command: ["hyprctl", "windowpreviews", "disable"]
   }
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (event.name !== "omaspaceshover") return
+      if (event.name !== "windowpreviews") return
       if (root.inlineTarget) return // Raised thumbnail hover is owned by QML.
       var next = root.enabled ? HoverModel.parsePayload(String(event.data)) : null
       root.hide()
@@ -103,7 +103,7 @@ Item {
         exclusionMode: ExclusionMode.Ignore
         color: "transparent"
         mask: Region {} // Preview is a tooltip: all pointer input passes through.
-        WlrLayershell.namespace: "omarchy-omaspaces-tab-preview"
+        WlrLayershell.namespace: "omarchy-window-previews-tab-preview"
         WlrLayershell.layer: WlrLayer.Overlay
         WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
         property bool capturing: true
@@ -159,7 +159,7 @@ Item {
     }
   }
   IpcHandler {
-    target: "omaspaces-hover-debug"
+    target: "window-previews-hover-debug"
     function status(): string {
       return JSON.stringify({enabled: root.enabled, nativeLoaded: root.nativeLoaded,
         opened: !!popup.item, address: root.target ? root.target.address : "",

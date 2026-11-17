@@ -48,20 +48,20 @@ Item {
   onEnabledChanged: syncNative()
   Process {
     id: sync
-    command: ["hyprctl", "omaspaceshover", root.enabled ? "tabs-labels" : "snapshots-off"]
+    command: ["hyprctl", "windowpreviews", root.enabled ? "tabs-labels" : "snapshots-off"]
   }
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (event.name === "omaspacesdrag") {
+      if (event.name === "windowpreviewsdrag") {
         var drag
         try { drag = JSON.parse(String(event.data)) } catch (e) { return }
         root.dragTarget = typeof drag.target === "string" ? drag.target : ""
         if (root.hoverController) root.hoverController.cancelInline()
         return
       }
-      if (event.name === "omaspaceslabels") { root.customLabels = String(event.data) === "custom"; return }
-      if (event.name !== "omaspacestabs" || !root.enabled) return
+      if (event.name === "windowpreviewslabels") { root.customLabels = String(event.data) === "custom"; return }
+      if (event.name !== "windowpreviewstabs" || !root.enabled) return
       var text = String(event.data)
       if (text === "paused") {
         root.suspended = true
@@ -164,7 +164,7 @@ Item {
       color: "transparent"
       exclusionMode: ExclusionMode.Ignore
       mask: Region { id: raisedInput }
-      WlrLayershell.namespace: "omarchy-omaspaces-tab-snapshots"
+      WlrLayershell.namespace: "omarchy-window-previews-tab-snapshots"
       WlrLayershell.layer: WlrLayer.Overlay
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       Repeater {
@@ -313,7 +313,7 @@ Item {
     }
   }
   IpcHandler {
-    target: "omaspaces-snapshots-debug"
+    target: "window-previews-snapshots-debug"
     function status(): string {
       var details = root.cells.filter(function(cell) { return !!cell }).map(function(cell) { return cell.diagnostic() })
       return JSON.stringify({enabled: root.enabled, suspended: root.suspended, customLabels: root.customLabels, groups: root.rows.length, queued: root.queue.length,
