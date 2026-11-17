@@ -21,6 +21,21 @@ previews, and mouse drag reordering.
   An outline marks the destination; release applies the order. Super-modified
   presses bypass reordering, leaving native Hyprland drag behavior in control.
 - Bounded retries for missing captures and missing monitor overlays.
+- **Toggle the overview:** three-finger swipe up (enabled by default), or
+  **Super + Ctrl + Up** after adding the example binding below. The plugin does
+  not install a keyboard binding automatically.
+- **Navigate windows:** **← / → / ↑ / ↓** move spatially between thumbnails,
+  ignoring group boundaries. **Tab** moves right; **Shift + Tab** moves left.
+- **Activate the selection:** **Enter / Return / Space** focuses the selected
+  window and closes the overview.
+- **Number shortcuts:** **1–9** activates the corresponding tab when a group is
+  selected; otherwise it switches to the corresponding visible workspace on the
+  selected monitor. Numbers are positions in the displayed list, not workspace IDs.
+- **Mouse selection:** hover a window thumbnail to select it, click it to focus
+  the window, or click a workspace's background to switch to that workspace.
+  Clicking a native group tab or its raised snapshot selects that tab.
+- **Dismiss the overview:** **Esc**, or click the background outside the workspace
+  content. The configured toggle shortcut or swipe also closes it.
 
 ## Requirements
 
@@ -89,10 +104,10 @@ The keybinding is an example, not installed by this plugin. Set `gesture` to
 a swipe remains until the next Hyprland config reload or restart; toggling the
 setting off cannot unregister an existing gesture.
 
-Click a thumbnail to focus its window. Arrow keys move between window thumbnails;
-Tab and Shift+Tab act like right and left. Enter or Space activates the selection.
-Escape or a click outside the content dismisses the overview. Digit keys 1–9
-retain the workspace/group shortcut behavior inherited from OmaSpaces.
+All overview keyboard, mouse and gesture controls are listed under Features.
+The native tab controls also support plain left-drag reordering and a 250 ms
+hover for live previews. **Super + left-drag** remains controlled by Hyprland;
+the plugin does not intercept it.
 
 ## Settings
 
