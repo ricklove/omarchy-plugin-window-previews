@@ -4,9 +4,16 @@ A fork of [OmaSpaces](https://github.com/TerrifiedBug/omaspaces), extending its
 workspace overview with spatial window grids, group-tab snapshots, live hover
 previews, and mouse drag reordering.
 
+![Group tabs with tiny snapshots and a larger live preview on hover](docs/images/group-tab-previews.png)
+
+Group tabs show tiny still snapshots next to their titles. Hover over a tab
+for 250 ms to see a larger live preview without switching windows.
+
 ![Spatial workspace overview with grouped window thumbnails](docs/images/workspace-overview.png)
 
-![Group tabs with tiny snapshots and a larger live preview on hover](docs/images/group-tab-previews.png)
+The workspace overview expands groups into thumbnail grids in their existing
+screen areas. Each monitor shows its own occupied workspaces, with individual
+windows available for selection.
 
 ## Features
 
